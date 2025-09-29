@@ -10,30 +10,32 @@ import { TripsView } from './components/Trips/TripsView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { AdminView } from './components/Admin/AdminView';
 import { FleetMapView } from './components/Map/FleetMapView';
-import { 
-  mockDevices, 
-  mockDrivers, 
-  mockVehicles, 
-  mockTrips, 
-  mockAlerts, 
-  mockGeofences 
-} from './data/mockData';
+import { useTraccarData } from './hooks/useTraccarData';
 import { Alert } from './types';
 
 function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
+  
+  // Usar dados reais do Traccar
+  const { 
+    devices, 
+    alerts: traccarAlerts, 
+    trips, 
+    geofences, 
+    drivers, 
+    vehicles,
+    loading,
+    error,
+    refetch
+  } = useTraccarData();
+  
+  const [alerts, setAlerts] = useState<Alert[]>([]);
 
-  // Simulate real-time updates
+  // Atualizar alerts quando os dados do Traccar mudarem
   useEffect(() => {
-    const interval = setInterval(() => {
-      // In a real implementation, this would be WebSocket connections
-      console.log('Real-time data update simulation');
-    }, 10000);
-    
-    return () => clearInterval(interval);
-  }, []);
+    setAlerts(traccarAlerts);
+  }, [traccarAlerts]);
 
   const currentUser = {
     name: 'Carlos Mendes',
@@ -56,33 +58,67 @@ function App() {
     ));
   };
 
+  // Mostrar loading enquanto carrega dados
+  if (loading && devices.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Conectando ao servidor Traccar...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Mostrar erro se houver
+  if (error && devices.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-red-600 mb-4">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Erro de Conexão</h3>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button 
+            onClick={refetch}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':
-        return <DashboardView devices={mockDevices} alerts={alerts} vehicles={mockVehicles} />;
+        return <DashboardView devices={devices} alerts={alerts} vehicles={vehicles} />;
       case 'map':
         return <FleetMapView 
-          devices={mockDevices} 
-          drivers={mockDrivers} 
-          vehicles={mockVehicles}
+          devices={devices} 
+          drivers={drivers} 
+          vehicles={vehicles}
           onNavigateToAdmin={() => setActiveView('admin')}
         />;
       case 'vehicles':
-        return <VehiclesList devices={mockDevices} vehicles={mockVehicles} drivers={mockDrivers} />;
+        return <VehiclesList devices={devices} vehicles={vehicles} drivers={drivers} />;
       case 'drivers':
-        return <DriversView drivers={mockDrivers} devices={mockDevices} />;
+        return <DriversView drivers={drivers} devices={devices} />;
       case 'geofences':
-        return <GeofencesView geofences={mockGeofences} />;
+        return <GeofencesView geofences={geofences} />;
       case 'alerts':
         return <AlertsView alerts={alerts} onAcknowledgeAlert={handleAcknowledgeAlert} />;
       case 'trips':
-        return <TripsView trips={mockTrips} drivers={mockDrivers} vehicles={mockVehicles} />;
+        return <TripsView trips={trips} drivers={drivers} vehicles={vehicles} />;
       case 'admin':
         return <AdminView />;
       case 'settings':
         return <SettingsView />;
       default:
-        return <DashboardView devices={mockDevices} alerts={alerts} />;
+        return <DashboardView devices={devices} alerts={alerts} vehicles={vehicles} />;
     }
   };
 
@@ -99,6 +135,18 @@ function App() {
         <Header user={currentUser} alertCount={pendingAlerts} />
         
         <main className="flex-1 p-3 sm:p-6 overflow-auto">
+          {/* Indicador de status da conexão */}
+          {error && (
+            <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-yellow-800">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <span className="text-sm">Problemas de conexão com o servidor Traccar. Alguns dados podem estar desatualizados.</span>
+              </div>
+            </div>
+          )}
+          
           {renderView()}
         </main>
       </div>

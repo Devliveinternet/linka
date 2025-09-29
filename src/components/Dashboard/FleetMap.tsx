@@ -215,12 +215,8 @@ export const FleetMap: React.FC<FleetMapProps> = ({
 
   // Simulate real-time position updates
   useEffect(() => {
-    const interval = setInterval(() => {
-      // In a real implementation, this would be WebSocket updates
-      console.log('Real-time position update simulation');
-    }, 5000);
-    
-    return () => clearInterval(interval);
+    // Real-time updates are now handled by the useTraccarData hook
+    // This effect is kept for any additional real-time logic if needed
   }, []);
 
   const getStatusColor = (device: Device) => {

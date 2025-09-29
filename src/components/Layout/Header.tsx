@@ -33,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({ user, alertCount }) => {
                 {alertCount > 9 ? '9+' : alertCount}
               </span>
             )}
+            <span className="absolute -bottom-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" title="Conectado ao Traccar"></span>
           </button>
 
           <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-gray-200">
