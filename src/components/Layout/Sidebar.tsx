@@ -17,13 +17,15 @@ interface SidebarProps {
   onViewChange: (view: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  allowedViews: string[];
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ 
-  activeView, 
-  onViewChange, 
-  isCollapsed, 
-  onToggleCollapse 
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeView,
+  onViewChange,
+  isCollapsed,
+  onToggleCollapse,
+  allowedViews,
 }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -36,6 +38,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'admin', label: 'Administração', icon: Shield },
     { id: 'settings', label: 'Configurações', icon: Settings },
   ];
+
+  const visibleItems = menuItems.filter((item) => allowedViews.includes(item.id));
+  const itemsToRender = visibleItems.length ? visibleItems : menuItems;
 
   return (
     <aside className={`bg-slate-900 text-white transition-all duration-300 ${
@@ -59,10 +64,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       
       <nav className="flex-1 p-4">
         <ul className="space-y-1 sm:space-y-2">
-          {menuItems.map((item) => {
+          {itemsToRender.map((item) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;
-            
+
             return (
               <li key={item.id}>
                 <button

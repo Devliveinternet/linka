@@ -5,9 +5,10 @@ import { Alert } from '../../types';
 interface AlertsViewProps {
   alerts: Alert[];
   onAcknowledgeAlert: (alertId: string) => void;
+  canAcknowledge?: boolean;
 }
 
-export const AlertsView: React.FC<AlertsViewProps> = ({ alerts, onAcknowledgeAlert }) => {
+export const AlertsView: React.FC<AlertsViewProps> = ({ alerts, onAcknowledgeAlert, canAcknowledge = true }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -75,6 +76,11 @@ export const AlertsView: React.FC<AlertsViewProps> = ({ alerts, onAcknowledgeAle
           <span className="text-sm text-gray-600">
             {filteredAlerts.filter(a => !a.acknowledged).length} pendentes de {filteredAlerts.length}
           </span>
+          {!canAcknowledge && (
+            <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-500">
+              Reconhecimento bloqueado pelo administrador
+            </span>
+          )}
         </div>
       </div>
 
@@ -185,9 +191,15 @@ export const AlertsView: React.FC<AlertsViewProps> = ({ alerts, onAcknowledgeAle
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (!canAcknowledge) return;
                       onAcknowledgeAlert(alert.id);
                     }}
-                    className="px-3 py-1 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    disabled={!canAcknowledge}
+                    className={`px-3 py-1 text-sm font-medium rounded-lg transition-colors ${
+                      canAcknowledge
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
                   >
                     Reconhecer
                   </button>

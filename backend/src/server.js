@@ -12,14 +12,67 @@ import {
 } from "./services/traccarClient.js";
 
 import { addSseClient, startRealtimeBridge } from "./realtime/traccarBridge.js";
+import {
+  initializeUserStore,
+  getUserByEmail,
+  sanitizeUser,
+  listUsersFor,
+  createUser,
+} from "./users/userStore.js";
+import { verifyPassword } from "./users/crypto.js";
+import { createSession, revokeSession } from "./users/sessionStore.js";
+import { requireAuth } from "./users/authMiddleware.js";
 
 // ----------------- setup -----------------
 const app  = express();
 const PORT = process.env.PORT || 3000;
 const knotsToKmh = (knots = 0) => Math.round(knots * 1.852);
 
+initializeUserStore();
+
 const origins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
 app.use(cors({ origin: origins.length ? origins : true }));
+app.use(express.json());
+
+// ----------------- auth -----------------
+app.post("/auth/login", (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: "Informe e-mail e senha" });
+  }
+
+  const user = getUserByEmail(email);
+  if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(401).json({ error: "Credenciais inválidas" });
+  }
+
+  const session = createSession(user.id);
+  res.json({ token: session.token, expiresAt: session.expiresAt, user: sanitizeUser(user) });
+});
+
+app.get("/auth/me", requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.post("/auth/logout", requireAuth, (req, res) => {
+  revokeSession(req.authToken);
+  res.json({ success: true });
+});
+
+// ----------------- user management -----------------
+app.get("/users", requireAuth, (req, res) => {
+  const users = listUsersFor(req.user);
+  res.json({ users });
+});
+
+app.post("/users", requireAuth, (req, res) => {
+  try {
+    const created = createUser(req.user, req.body || {});
+    res.status(201).json({ user: created });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // helper para padronizar respostas/erros
 function send(res, promise, { soft404 = false, soft400 = false } = {}) {
