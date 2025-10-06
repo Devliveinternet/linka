@@ -9,15 +9,15 @@ import { AlertsView } from './components/Alerts/AlertsView';
 import { TripsView } from './components/Trips/TripsView';
 import { SettingsView } from './components/Settings/SettingsView';
 import { AdminView } from './components/Admin/AdminView';
-import { FleetMapView } from './components/Map/FleetMapView';
+// import { FleetMapView } from './components/Map/FleetMapView'; // se não for usar, pode remover
 import { useTraccarData } from './hooks/useTraccarData';
 import { Alert } from './types';
+import LiveMap from './components/LiveMap';
 
 function App() {
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard'|'map'|'vehicles'|'drivers'|'geofences'|'alerts'|'trips'|'admin'|'settings'>('dashboard');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  
-  // Usar dados reais do Traccar
+
   const { 
     devices, 
     alerts: traccarAlerts, 
@@ -29,36 +29,22 @@ function App() {
     error,
     refetch
   } = useTraccarData();
-  
+
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
-  // Atualizar alerts quando os dados do Traccar mudarem
-  useEffect(() => {
-    setAlerts(traccarAlerts);
-  }, [traccarAlerts]);
+  useEffect(() => { setAlerts(traccarAlerts); }, [traccarAlerts]);
 
-  const currentUser = {
-    name: 'Carlos Mendes',
-    email: 'carlos.mendes@empresa.com',
-    role: 'manager'
-  };
-
+  const currentUser = { name: 'Carlos Mendes', email: 'carlos.mendes@empresa.com', role: 'manager' };
   const pendingAlerts = alerts.filter(a => !a.acknowledged).length;
 
   const handleAcknowledgeAlert = (alertId: string) => {
     setAlerts(prev => prev.map(alert => 
       alert.id === alertId 
-        ? { 
-            ...alert, 
-            acknowledged: true, 
-            acknowledgedBy: currentUser.name,
-            acknowledgedAt: new Date().toISOString()
-          }
+        ? { ...alert, acknowledged: true, acknowledgedBy: currentUser.name, acknowledgedAt: new Date().toISOString() }
         : alert
     ));
   };
 
-  // Mostrar loading enquanto carrega dados
   if (loading && devices.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -70,7 +56,6 @@ function App() {
     );
   }
 
-  // Mostrar erro se houver
   if (error && devices.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -92,17 +77,16 @@ function App() {
       </div>
     );
   }
+
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':
         return <DashboardView devices={devices} alerts={alerts} vehicles={vehicles} />;
       case 'map':
-        return <FleetMapView 
-          devices={devices} 
-          drivers={drivers} 
-          vehicles={vehicles}
-          onNavigateToAdmin={() => setActiveView('admin')}
-        />;
+        // Use o LiveMap na aba de mapa (tempo real via SSE)
+        return <LiveMap />;
+        // Se quiser manter o antigo:
+        // return <FleetMapView devices={devices} drivers={drivers} vehicles={vehicles} onNavigateToAdmin={() => setActiveView('admin')} />;
       case 'vehicles':
         return <VehiclesList devices={devices} vehicles={vehicles} drivers={drivers} />;
       case 'drivers':
@@ -135,7 +119,6 @@ function App() {
         <Header user={currentUser} alertCount={pendingAlerts} />
         
         <main className="flex-1 p-3 sm:p-6 overflow-auto">
-          {/* Indicador de status da conexão */}
           {error && (
             <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
               <div className="flex items-center gap-2 text-yellow-800">
@@ -146,7 +129,6 @@ function App() {
               </div>
             </div>
           )}
-          
           {renderView()}
         </main>
       </div>

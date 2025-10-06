@@ -26,6 +26,17 @@ export const listEvents = async (params = {}) => {
     throw e;
   }
 };
+export const listRoute = async (params = {}) => {
+  try {
+    const { data } = await traccar.get("/api/reports/route", { params });
+    return data; // array de posições
+  } catch (e) {
+    // fallback “suave” se a rota não existir nessa build
+    if (e.response?.status === 404) return [];
+    throw e;
+  }
+};
+
 
 export const listTrips     = async (params) => (await traccar.get("/api/reports/trips", { params })).data;
 export const listGeofences = async () => (await traccar.get("/api/geofences")).data;

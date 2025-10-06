@@ -1,0 +1,575 @@
+import { Loader } from '@googlemaps/js-api-loader';
+import { useEffect, useRef, useState } from 'react';
+import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
+import { MarkerClusterer } from '@googlemaps/markerclusterer';
+
+type Position = {
+  id?: number;
+  deviceId: number;
+  latitude: number;
+  longitude: number;
+  speed?: number;       // Se vier em knots, ajuste fmtSpeed.
+  fixTime?: string;
+  deviceTime?: string;
+  serverTime?: string;
+};
+
+type Geofence = {
+  id: number;
+  name: string;
+  description?: string;
+  area: string; // "CIRCLE (lon lat, radius)" ou "POLYGON ((lon lat, ...))"
+  attributes?: Record<string, any>;
+};
+
+type TraccarEvent = {
+  id?: number;
+  type: string;              // 'geofenceEnter' | 'geofenceExit' | ...
+  deviceId: number;
+  geofenceId?: number;
+  eventTime?: string;
+  serverTime?: string;
+  attributes?: Record<string, any>;
+};
+
+const tsOf = (p: Position) =>
+  new Date(p.fixTime || p.deviceTime || p.serverTime || 0).getTime();
+
+// Se velocidade vier em knots (padrão Traccar), troque 3.6 por 1.852
+const fmtSpeed = (v?: number) => (v != null ? `${(v * 3.6).toFixed(1)} km/h` : '-');
+const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '-');
+
+// ---------- cores por categoria/atributo ----------
+function geofenceColors(gf: Geofence) {
+  const attr = gf.attributes || {};
+  const explicit = (attr.color || attr.strokeColor) as string | undefined;
+
+  const cat = String(attr.category || attr.type || '').toLowerCase();
+  const palette: Record<string, string> = {
+    restricted: '#ef4444', // vermelho
+    delivery:   '#10b981', // verde
+    warehouse:  '#f59e0b', // amarelo
+    base:       '#2563eb', // azul
+  };
+  const base = explicit || palette[cat] || '#6b7280'; // cinza padrão
+
+  return { strokeColor: base, fillColor: base }; // opacidade define no setOptions
+}
+
+// ---------- parser de áreas do Traccar ----------
+function parseGeofenceArea(area: string):
+  | { type: 'circle'; center: google.maps.LatLngLiteral; radius: number }
+  | { type: 'polygon'; path: google.maps.LatLngLiteral[] }
+  | null
+{
+  if (!area) return null;
+  const s = area.trim();
+
+  // CIRCLE (lon lat, radius)
+  if (/^CIRCLE\s*\(/i.test(s)) {
+    const m = s.match(/^CIRCLE\s*\(\s*([-\d.]+)\s+([-\d.]+)\s*,\s*([-\d.]+)\s*\)\s*$/i);
+    if (!m) return null;
+    const lon = parseFloat(m[1]);
+    const lat = parseFloat(m[2]);
+    const radius = parseFloat(m[3]);
+    if (Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(radius)) {
+      return { type: 'circle', center: { lat, lng: lon }, radius };
+    }
+    return null;
+  }
+
+  // POLYGON ((lon lat, lon lat, ...))
+  if (/^POLYGON\s*\(\(/i.test(s)) {
+    const inside = s.replace(/^POLYGON\s*\(\(/i, '').replace(/\)\)\s*$/,'').trim();
+    const pairs = inside.split(',').map(t => t.trim()).filter(Boolean);
+    const path: google.maps.LatLngLiteral[] = [];
+    for (const pair of pairs) {
+      const [lonStr, latStr] = pair.split(/\s+/);
+      const lon = parseFloat(lonStr);
+      const lat = parseFloat(latStr);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        path.push({ lat, lng: lon });
+      }
+    }
+    if (path.length >= 3) return { type: 'polygon', path };
+    return null;
+  }
+  return null;
+}
+
+export default function LiveMap() {
+  const mapDiv = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<google.maps.Map>();
+  const markersRef = useRef<Map<number, google.maps.Marker>>(new Map());
+  const polylinesRef = useRef<Map<number, google.maps.Polyline>>(new Map());
+  const geofenceOverlaysRef = useRef<Map<number, google.maps.Circle | google.maps.Polygon>>(new Map());
+  const lastSeenTsRef = useRef<Map<number, number>>(new Map());
+  const lastPosRef = useRef<Map<number, Position>>(new Map()); // ← última posição por device (para busca)
+  const infoRef = useRef<google.maps.InfoWindow>();
+  const clustererRef = useRef<MarkerClusterer | null>(null);
+
+  const [ready, setReady] = useState(false);
+  const [nameMap, setNameMap] = useState<Record<number, string>>({});
+  const [geofences, setGeofences] = useState<Geofence[]>([]);
+  const [showGeofences, setShowGeofences] = useState(true);
+
+  // Busca (UI)
+  const [query, setQuery] = useState('');
+  const matches = (() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return Object.entries(nameMap)
+      .filter(([, nm]) => nm.toLowerCase().includes(q))
+      .slice(0, 8) as [string, string][];
+  })();
+
+  // ---- toasts simples ----
+  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  function showToast(text: string) {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, text }]);
+    setTimeout(() => setToasts((t) => t.filter(x => x.id !== id)), 5000);
+  }
+
+  // -------- rota (backend) --------
+  async function fetchRoute(deviceId: number, hours = 2) {
+    const url = new URL('/traccar/route', window.location.origin);
+    url.searchParams.set('deviceId', String(deviceId));
+    url.searchParams.set('hours', String(hours));
+    const r = await fetch(url.toString());
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return (await r.json()) as Position[]; // posições em ordem cronológica
+  }
+
+  function drawRoute(deviceId: number, positions: Position[]) {
+    if (!mapRef.current || !positions.length) return;
+
+    // remove rota anterior do mesmo device
+    const old = polylinesRef.current.get(deviceId);
+    if (old) {
+      old.setMap(null);
+      polylinesRef.current.delete(deviceId);
+    }
+
+    const path = positions.map((p) => ({ lat: p.latitude, lng: p.longitude }));
+
+    // setas de direção
+    const arrowSymbol: google.maps.Symbol = {
+      path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+      scale: 3,
+      strokeOpacity: 1,
+    };
+
+    const poly = new google.maps.Polyline({
+      path,
+      strokeOpacity: 0.9,
+      strokeWeight: 3,
+      icons: [{ icon: arrowSymbol, offset: '25%', repeat: '20%' }],
+    });
+    poly.setMap(mapRef.current);
+    polylinesRef.current.set(deviceId, poly);
+
+    // ajusta o mapa para a trilha
+    const bounds = new google.maps.LatLngBounds();
+    path.forEach((pt) => bounds.extend(pt as any));
+    mapRef.current.fitBounds(bounds);
+  }
+
+  function clearRoute(deviceId: number) {
+    const poly = polylinesRef.current.get(deviceId);
+    if (poly) {
+      poly.setMap(null);
+      polylinesRef.current.delete(deviceId);
+    }
+  }
+
+  // -------- bootstrap --------
+  useEffect(() => {
+    const loader = new Loader({
+      apiKey: import.meta.env.VITE_GOOGLE_MAPS_KEY as string,
+      version: 'weekly',
+    });
+    loader.load().then(() => {
+      if (!mapDiv.current) return;
+      mapRef.current = new google.maps.Map(mapDiv.current, {
+        center: { lat: -15.7797, lng: -47.9297 },
+        zoom: 5,
+        streetViewControl: false,
+        mapTypeControl: false,
+      });
+      infoRef.current = new google.maps.InfoWindow();
+
+      // inicia clusterer
+      clustererRef.current = new MarkerClusterer({
+        map: mapRef.current,
+        markers: [],
+      });
+
+      setReady(true);
+    });
+  }, []);
+
+  // snapshot inicial: nomes + últimas posições + geofences
+  useEffect(() => {
+    if (!ready) return;
+
+    fetch('/traccar/devices/map')
+      .then((r) => r.json())
+      .then((m) => setNameMap(m || {}))
+      .catch(() => {});
+
+    fetch('/traccar/positions/latest')
+      .then((r) => r.json())
+      .then((positions: Position[]) => {
+        applyBatch(positions);
+        fitToMarkers();
+      })
+      .catch(() => {});
+
+    fetch('/traccar/geofences')
+      .then((r) => r.json())
+      .then((gfs: Geofence[]) => setGeofences(Array.isArray(gfs) ? gfs : []))
+      .catch(() => {});
+  }, [ready]);
+
+  // desenhar/limpar geofences quando mudar toggle ou lista (com cores)
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    // limpa overlays anteriores
+    for (const ov of geofenceOverlaysRef.current.values()) {
+      ov.setMap(null);
+    }
+    geofenceOverlaysRef.current.clear();
+
+    if (!showGeofences) return;
+    for (const gf of geofences) {
+      const parsed = parseGeofenceArea(gf.area);
+      if (!parsed) continue;
+
+      const { strokeColor, fillColor } = geofenceColors(gf);
+
+      if (parsed.type === 'circle') {
+        const circle = new google.maps.Circle({
+          map: mapRef.current,
+          center: parsed.center,
+          radius: parsed.radius,
+          fillOpacity: 0.12,
+          strokeOpacity: 0.9,
+          strokeWeight: 2,
+          strokeColor,
+          fillColor,
+        });
+        geofenceOverlaysRef.current.set(gf.id, circle);
+      } else if (parsed.type === 'polygon') {
+        const polygon = new google.maps.Polygon({
+          map: mapRef.current,
+          paths: parsed.path,
+          fillOpacity: 0.12,
+          strokeOpacity: 0.9,
+          strokeWeight: 2,
+          strokeColor,
+          fillColor,
+        });
+        geofenceOverlaysRef.current.set(gf.id, polygon);
+      }
+    }
+  }, [showGeofences, geofences]);
+
+  // tempo real via SSE: posições + eventos (geofence enter/exit)
+  useTraccarRealtime({
+    onPositions: (positions: Position[]) => {
+      const latest = reduceToLatestByDevice(positions);
+      applyBatch(latest);
+    },
+    onEvents: (events: TraccarEvent[]) => {
+      if (!Array.isArray(events)) return;
+      for (const ev of events) {
+        if (!ev?.type || !ev?.deviceId) continue;
+        const gId = ev.geofenceId ?? ev.attributes?.geofenceId;
+        if (!gId) continue;
+
+        if (ev.type === 'geofenceEnter' || ev.type === 'geofenceExit') {
+          const deviceName = nameMap[ev.deviceId] || `Device ${ev.deviceId}`;
+          const gf = geofences.find(g => g.id === gId);
+          const gfName = gf?.name || `Geofence ${gId}`;
+          const verb = ev.type === 'geofenceEnter' ? 'entrou em' : 'saiu de';
+          const when = fmtTime(ev.eventTime || ev.serverTime);
+          showToast(`${deviceName} ${verb} "${gfName}" • ${when}`);
+
+          // destaque visual
+          highlightGeofence(gId);
+        }
+      }
+    }
+  });
+
+  // -------- helpers --------
+  function reduceToLatestByDevice(batch: Position[]): Position[] {
+    const byDevice = new Map<number, Position>();
+    for (const p of batch) {
+      if (!p || typeof p.latitude !== 'number' || typeof p.longitude !== 'number') continue;
+      const prev = byDevice.get(p.deviceId);
+      if (!prev || tsOf(p) >= tsOf(prev)) byDevice.set(p.deviceId, p);
+    }
+    return Array.from(byDevice.values());
+  }
+
+  function applyBatch(batch: Position[]) {
+    for (const p of batch) {
+      const ts = tsOf(p);
+      const lastTs = lastSeenTsRef.current.get(p.deviceId) ?? -Infinity;
+      if (ts < lastTs) continue; // chegou atrasada → ignora
+      lastSeenTsRef.current.set(p.deviceId, ts);
+      lastPosRef.current.set(p.deviceId, p); // guarda última posição para busca
+      upsertMarker(p);
+    }
+    // reaplica o clustering após o lote
+    clustererRef.current?.repaint();
+  }
+
+  function upsertMarker(p: Position) {
+    if (!mapRef.current) return;
+
+    const markers = markersRef.current;
+    const latLng = new google.maps.LatLng(p.latitude, p.longitude);
+    const name = nameMap[p.deviceId] || `Device ${p.deviceId}`;
+    const timestamp = p.fixTime || p.deviceTime || p.serverTime;
+
+    let m = markers.get(p.deviceId);
+    if (!m) {
+      // cria sem map (o clusterer gerencia o map)
+      m = new google.maps.Marker({
+        position: latLng,
+        title: `${name}`,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 6,
+          fillOpacity: 1,
+          strokeWeight: 1,
+          strokeOpacity: 0.8,
+          strokeColor: '#1f2937',
+          fillColor: (p.speed ?? 0) > 0.5 ? '#2563eb' : '#10b981', // azul movendo, verde parado
+        } as google.maps.Symbol,
+      });
+      m.addListener('click', () => openInfo(m!, p));
+      markers.set(p.deviceId, m);
+      clustererRef.current?.addMarker(m, true);
+    } else {
+      m.setPosition(latLng);
+      const icon = m.getIcon() as google.maps.Symbol | null;
+      if (icon && typeof icon === 'object') {
+        (icon as any).fillColor = (p.speed ?? 0) > 0.5 ? '#2563eb' : '#10b981';
+        m.setIcon(icon);
+      }
+      google.maps.event.clearListeners(m, 'click');
+      m.addListener('click', () => openInfo(m!, p));
+    }
+
+    // title informativo
+    m.setTitle(`${name} • ${fmtSpeed(p.speed)} • ${fmtTime(timestamp)}`);
+  }
+
+  async function onRouteAction(deviceId: number, hours = 2) {
+    const already = polylinesRef.current.get(deviceId);
+    if (already) {
+      clearRoute(deviceId);
+      infoRef.current?.close();
+      return;
+    }
+    try {
+      const route = await fetchRoute(deviceId, hours);
+      drawRoute(deviceId, route);
+      infoRef.current?.close();
+    } catch (e) {
+      console.warn('Falha ao buscar/desenhar rota:', e);
+    }
+  }
+
+  function openInfo(marker: google.maps.Marker, p: Position) {
+    const name = nameMap[p.deviceId] || `Device ${p.deviceId}`;
+    const time = p.fixTime || p.deviceTime || p.serverTime;
+
+    const hasTrack = polylinesRef.current.has(p.deviceId);
+    const uid = `${p.deviceId}-${Date.now()}`;
+    const btnId = `route-btn-${uid}`;
+    const selId = `period-sel-${uid}`;
+    const actionLabel = hasTrack ? 'Ocultar trilha' : 'Ver trilha';
+
+    const html = `
+      <div style="font-family: system-ui; font-size: 13px">
+        <div style="font-weight:600; margin-bottom:4px">${name}</div>
+        <div>Velocidade: <b>${fmtSpeed(p.speed)}</b></div>
+        <div>Horário: <b>${fmtTime(time)}</b></div>
+        <div>Coordenadas: <b>${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</b></div>
+
+        <div style="display:flex; gap:8px; align-items:center; margin-top:10px">
+          <label for="${selId}" style="font-weight:600">Período:</label>
+          <select id="${selId}" style="padding:6px 8px; border:1px solid #d1d5db; border-radius:8px">
+            <option value="0.5">30 min</option>
+            <option value="2" selected>2 h</option>
+            <option value="6">6 h</option>
+            <option value="24">24 h</option>
+          </select>
+
+          <button id="${btnId}" style="padding:6px 10px;border-radius:8px;border:1px solid #d1d5db;background:#111827;color:#fff;cursor:pointer">
+            ${actionLabel}
+          </button>
+        </div>
+      </div>`;
+
+    infoRef.current?.setContent(html);
+    infoRef.current?.open({ map: mapRef.current, anchor: marker });
+
+    google.maps.event.addListenerOnce(infoRef.current!, 'domready', () => {
+      const btn = document.getElementById(btnId);
+      const sel = document.getElementById(selId) as HTMLSelectElement | null;
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        const hours = sel ? parseFloat(sel.value) : 2;
+        onRouteAction(p.deviceId, isFinite(hours) ? hours : 2);
+      }, { once: true });
+    });
+  }
+
+  // destaca uma geofence por 5s (mesmo se estiver oculta)
+  function highlightGeofence(geofenceId: number) {
+    const overlay = geofenceOverlaysRef.current.get(geofenceId);
+    if (!overlay || !mapRef.current) return;
+
+    const wasHidden = (overlay as any).getMap && !(overlay as any).getMap();
+    if (wasHidden) (overlay as any).setMap(mapRef.current);
+
+    const prev: any = {};
+    if ((overlay as google.maps.Circle).getRadius) {
+      const circle = overlay as google.maps.Circle;
+      prev.strokeWeight = circle.get('strokeWeight');
+      prev.fillOpacity  = circle.get('fillOpacity');
+      circle.setOptions({ strokeWeight: 4, fillOpacity: 0.25 });
+    } else {
+      const polygon = overlay as google.maps.Polygon;
+      prev.strokeWeight = polygon.get('strokeWeight');
+      prev.fillOpacity  = polygon.get('fillOpacity');
+      polygon.setOptions({ strokeWeight: 4, fillOpacity: 0.25 });
+    }
+
+    setTimeout(() => {
+      if (!overlay) return;
+      if ((overlay as google.maps.Circle).getRadius) {
+        (overlay as google.maps.Circle).setOptions({
+          strokeWeight: prev.strokeWeight ?? 2,
+          fillOpacity: prev.fillOpacity ?? 0.12,
+        });
+      } else {
+        (overlay as google.maps.Polygon).setOptions({
+          strokeWeight: prev.strokeWeight ?? 2,
+          fillOpacity: prev.fillOpacity ?? 0.12,
+        });
+      }
+      if (wasHidden) (overlay as any).setMap(null);
+    }, 5000);
+  }
+
+  function fitToMarkers() {
+    if (!mapRef.current) return;
+    const all = Array.from(markersRef.current.values());
+    if (!all.length) return;
+    const bounds = new google.maps.LatLngBounds();
+    for (const m of all) {
+      const pos = m.getPosition();
+      if (pos) bounds.extend(pos);
+    }
+    mapRef.current.fitBounds(bounds);
+  }
+
+  // ------ Busca: voar até device ------
+  function flyToDevice(deviceId: number) {
+    if (!mapRef.current) return;
+    const marker = markersRef.current.get(deviceId);
+    const pos = lastPosRef.current.get(deviceId);
+    if (!marker || !pos) return;
+    mapRef.current.panTo(marker.getPosition()!);
+    mapRef.current.setZoom(Math.max(mapRef.current.getZoom() ?? 5, 15));
+    openInfo(marker, pos);
+  }
+
+  return (
+    <div style={{ width: '100%', height: '80vh', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+      {/* Toggle Geofences */}
+      <div style={{
+        position: 'absolute', zIndex: 3, top: 12, left: 12,
+        background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px',
+        fontFamily: 'system-ui', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8
+      }}>
+        <input
+          id="gf-toggle"
+          type="checkbox"
+          checked={showGeofences}
+          onChange={(e) => setShowGeofences(e.target.checked)}
+        />
+        <label htmlFor="gf-toggle">Mostrar geofences</label>
+      </div>
+
+      {/* Busca por device */}
+      <div style={{
+        position: 'absolute', zIndex: 3, top: 12, left: '50%', transform: 'translateX(-50%)',
+        background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: 8,
+        fontFamily: 'system-ui', fontSize: 13, minWidth: 280, maxWidth: 360,
+      }}>
+        <input
+          type="text"
+          placeholder="Buscar dispositivo..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 8 }}
+        />
+        {matches.length > 0 && (
+          <div style={{
+            marginTop: 6, borderTop: '1px solid #eee', paddingTop: 6,
+            maxHeight: 220, overflowY: 'auto'
+          }}>
+            {matches.map(([idStr, nm]) => {
+              const id = Number(idStr);
+              return (
+                <div key={id} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '6px 6px', borderRadius: 6, cursor: 'pointer'
+                }}
+                onClick={() => flyToDevice(id)}
+                onKeyDown={(e) => { if (e.key === 'Enter') flyToDevice(id); }}
+                tabIndex={0}
+                >
+                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
+                    {nm}
+                  </div>
+                  <div style={{
+                    fontSize: 12, background: '#111827', color: 'white',
+                    padding: '4px 8px', borderRadius: 999
+                  }}>abrir</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Toasts (eventos) */}
+      <div style={{
+        position: 'absolute', zIndex: 3, top: 12, right: 12,
+        display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360
+      }}>
+        {toasts.map(t => (
+          <div key={t.id} style={{
+            background: 'rgba(17,24,39,0.95)', color: 'white',
+            borderRadius: 10, padding: '10px 12px', fontFamily: 'system-ui', fontSize: 13,
+            boxShadow: '0 6px 20px rgba(0,0,0,0.2)'
+          }}>
+            {t.text}
+          </div>
+        ))}
+      </div>
+
+      <div ref={mapDiv} style={{ width: '100%', height: '100%' }} />
+    </div>
+  );
+}
