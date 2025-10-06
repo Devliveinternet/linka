@@ -20,6 +20,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const lastBoundsRef = useRef<google.maps.LatLngBounds | null>(null);
 
   // Load API key from localStorage
   useEffect(() => {
@@ -94,6 +95,9 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     markersRef.current.forEach(marker => marker.setMap(null));
     markersRef.current = [];
 
+    const bounds = new google.maps.LatLngBounds();
+    let hasVisibleDevice = false;
+
     devices.forEach((device) => {
       if (!device.position) return;
 
@@ -101,6 +105,9 @@ export const FleetMap: React.FC<FleetMapProps> = ({
         lat: device.position.lat,
         lng: device.position.lon
       };
+
+      bounds.extend(position);
+      hasVisibleDevice = true;
 
       // Create custom marker icon based on device status
       const getMarkerIcon = () => {
@@ -175,6 +182,18 @@ export const FleetMap: React.FC<FleetMapProps> = ({
 
       markersRef.current.push(marker);
     });
+
+    if (hasVisibleDevice) {
+      lastBoundsRef.current = bounds;
+
+      if (markersRef.current.length === 1) {
+        mapInstance.setCenter(bounds.getCenter());
+        const currentZoom = mapInstance.getZoom() ?? 12;
+        mapInstance.setZoom(Math.max(currentZoom, 14));
+      } else {
+        mapInstance.fitBounds(bounds, { top: 32, right: 32, bottom: 32, left: 32 } as google.maps.Padding);
+      }
+    }
   };
 
   // Map control handlers
@@ -194,8 +213,17 @@ export const FleetMap: React.FC<FleetMapProps> = ({
 
   const handleResetView = () => {
     if (map) {
-      map.setCenter({ lat: -16.6799, lng: -49.255 });
-      map.setZoom(12);
+      if (lastBoundsRef.current) {
+        if (markersRef.current.length <= 1) {
+          map.setCenter(lastBoundsRef.current.getCenter());
+          map.setZoom(Math.max(map.getZoom() ?? 12, 14));
+        } else {
+          map.fitBounds(lastBoundsRef.current, { top: 32, right: 32, bottom: 32, left: 32 } as google.maps.Padding);
+        }
+      } else {
+        map.setCenter({ lat: -16.6799, lng: -49.255 });
+        map.setZoom(12);
+      }
     }
   };
 
@@ -211,7 +239,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, selectedDevice]);
+  }, [map, devices, vehicles, selectedDevice]);
 
   // Simulate real-time position updates
   useEffect(() => {

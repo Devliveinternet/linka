@@ -82,6 +82,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
 
     const filteredDevices = showOfflineDevices ? devices : devices.filter(d => d.status === 'online');
 
+    const bounds = new google.maps.LatLngBounds();
+    let hasVisibleDevice = false;
+
     filteredDevices.forEach((device) => {
       if (!device.position) return;
 
@@ -89,6 +92,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
         lat: device.position.lat,
         lng: device.position.lon
       };
+
+      bounds.extend(position);
+      hasVisibleDevice = true;
 
       // Create custom marker icon based on device status
       const getMarkerIcon = () => {
@@ -163,6 +169,16 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
 
       markersRef.current.push(marker);
     });
+
+    if (hasVisibleDevice) {
+      if (markersRef.current.length === 1) {
+        mapInstance.setCenter(bounds.getCenter());
+        const currentZoom = mapInstance.getZoom() ?? 12;
+        mapInstance.setZoom(Math.max(currentZoom, 14));
+      } else {
+        mapInstance.fitBounds(bounds, { top: 48, right: 48, bottom: 48, left: 48 } as google.maps.Padding);
+      }
+    }
   };
 
   const handleZoomIn = () => {
@@ -219,7 +235,7 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, showOfflineDevices, selectedDevice]);
+  }, [map, devices, vehicles, showOfflineDevices, selectedDevice]);
 
   const getStatusColor = (device: Device) => {
     if (device.status === 'offline') return 'text-gray-400';
