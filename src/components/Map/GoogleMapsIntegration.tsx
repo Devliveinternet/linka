@@ -1,43 +1,77 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader } from '@googlemaps/js-api-loader';
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  RotateCcw, 
-  Maximize, 
-  Layers, 
-  Filter,
-  MapPin,
+import {
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
   Navigation,
   Circle,
-  Square,
-  Eye,
-  EyeOff
+  Square
 } from 'lucide-react';
-import { Device } from '../../types';
+import { Device, Vehicle } from '../../types';
 import { createVehicleIcon, getVehicleTypeFromDevice, getVehiclePhotoFromDevice } from '../../utils/vehicleIcons';
 
 interface GoogleMapsIntegrationProps {
   apiKey: string;
-  onApiKeyChange: (apiKey: string) => void;
   devices: Device[];
-  vehicles?: any[];
+  vehicles?: Vehicle[];
+  /**
+   * Optional identifier of the selected device. When provided, the component becomes controlled
+   * and will highlight and center the specified device. When omitted, the component manages its
+   * own selection state internally.
+   */
+  selectedDevice?: string;
+  /**
+   * Callback triggered when a device marker or list item is selected.
+   */
+  onDeviceSelect?: (deviceId: string) => void;
+  /**
+   * Layout variant. `full` renders the complete fleet map experience used in the dedicated map
+   * page, while `dashboard` provides a compact layout tailored for dashboard cards.
+   */
+  variant?: 'full' | 'dashboard';
+  /**
+   * Additional classes applied to the outer container when using the dashboard variant.
+   */
+  className?: string;
 }
 
-export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
-  apiKey,
-  devices,
-  vehicles = []
-}) => {
+export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = (props) => {
+  const {
+    apiKey,
+    devices,
+    vehicles = [],
+    selectedDevice,
+    onDeviceSelect,
+    variant = 'full',
+    className
+  } = props;
+  const isControlled = Object.prototype.hasOwnProperty.call(props, 'selectedDevice');
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [selectedDevice, setSelectedDevice] = useState<string>();
+  const [internalSelectedDevice, setInternalSelectedDevice] = useState<string>();
   const [mapStyle, setMapStyle] = useState<'roadmap' | 'satellite' | 'terrain'>('roadmap');
   const [showOfflineDevices, setShowOfflineDevices] = useState(true);
   const [showGeofences, setShowGeofences] = useState(true);
   const [showTraffic, setShowTraffic] = useState(false);
   const markersRef = useRef<google.maps.Marker[]>([]);
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
+  const lastCenteredDeviceRef = useRef<string>();
+  const lastCenteredPositionRef = useRef<{ lat: number; lng: number }>();
+
+  const activeSelectedDevice = isControlled ? selectedDevice : internalSelectedDevice;
+
+  useEffect(() => {
+    if (isControlled) {
+      setInternalSelectedDevice(selectedDevice);
+    }
+  }, [isControlled, selectedDevice]);
+
+  const isDashboardVariant = variant === 'dashboard';
+  const mapHeightClass = useMemo(
+    () => (isDashboardVariant ? 'h-64 sm:h-80 lg:h-96' : 'h-[600px]'),
+    [isDashboardVariant]
+  );
 
   const initializeMap = async () => {
     if (!apiKey || !mapRef.current) return;
@@ -95,8 +129,8 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
         const vehicleType = getVehicleTypeFromDevice(device.id, vehicles);
         const vehiclePhoto = getVehiclePhotoFromDevice(device.id, vehicles);
         const isMoving = device.position!.ignition && device.position!.speed > 5;
-        const isSelected = selectedDevice === device.id;
-        
+        const isSelected = activeSelectedDevice === device.id;
+
         return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
       };
 
@@ -148,8 +182,8 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
       });
 
       marker.addListener('click', () => {
-        setSelectedDevice(device.id);
-        
+        handleDeviceSelection(device.id);
+
         // Close other info windows
         markersRef.current.forEach(m => {
           if (m !== marker && (m as any).infoWindow) {
@@ -219,7 +253,42 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, showOfflineDevices, selectedDevice]);
+  }, [map, devices, showOfflineDevices, activeSelectedDevice]);
+
+  useEffect(() => {
+    if (!map || !activeSelectedDevice) return;
+
+    const device = devices.find(d => d.id === activeSelectedDevice && d.position);
+    if (!device?.position) return;
+
+    const newPosition = {
+      lat: device.position.lat,
+      lng: device.position.lon
+    };
+
+    const hasDeviceChanged = lastCenteredDeviceRef.current !== activeSelectedDevice;
+    const hasPositionChanged =
+      !lastCenteredPositionRef.current ||
+      lastCenteredPositionRef.current.lat !== newPosition.lat ||
+      lastCenteredPositionRef.current.lng !== newPosition.lng;
+
+    if (hasDeviceChanged || hasPositionChanged) {
+      map.panTo(newPosition);
+      if ((map.getZoom() || 12) < 14) {
+        map.setZoom(14);
+      }
+
+      lastCenteredDeviceRef.current = activeSelectedDevice;
+      lastCenteredPositionRef.current = newPosition;
+    }
+  }, [map, activeSelectedDevice, devices]);
+
+  const handleDeviceSelection = (deviceId: string) => {
+    if (!isControlled) {
+      setInternalSelectedDevice(deviceId);
+    }
+    onDeviceSelect?.(deviceId);
+  };
 
   const getStatusColor = (device: Device) => {
     if (device.status === 'offline') return 'text-gray-400';
@@ -247,6 +316,131 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
   const stoppedDevices = devices.filter(d => d.status === 'online' && d.position?.ignition && d.position?.speed <= 5);
   const offlineDevices = devices.filter(d => d.status === 'offline');
 
+  const mapControls = (
+    <div className="absolute top-4 right-4 z-10 space-y-2">
+      {/* Zoom Controls */}
+      <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
+        <button
+          onClick={handleZoomIn}
+          className={`block ${isDashboardVariant ? 'w-8 h-8' : 'w-10 h-10'} flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200`}
+        >
+          <ZoomIn size={isDashboardVariant ? 14 : 16} />
+        </button>
+        <button
+          onClick={handleZoomOut}
+          className={`block ${isDashboardVariant ? 'w-8 h-8' : 'w-10 h-10'} flex items-center justify-center hover:bg-gray-50 transition-colors`}
+        >
+          <ZoomOut size={isDashboardVariant ? 14 : 16} />
+        </button>
+      </div>
+
+      {/* Map Style Controls */}
+      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
+        <div className="space-y-1">
+          <button
+            onClick={() => handleMapStyleChange('roadmap')}
+            className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+              mapStyle === 'roadmap' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Mapa
+          </button>
+          <button
+            onClick={() => handleMapStyleChange('satellite')}
+            className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+              mapStyle === 'satellite' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Satélite
+          </button>
+          <button
+            onClick={() => handleMapStyleChange('terrain')}
+            className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+              mapStyle === 'terrain' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            Terreno
+          </button>
+        </div>
+      </div>
+
+      {/* Traffic Layer */}
+      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
+        <button
+          onClick={toggleTraffic}
+          className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+            showTraffic ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          Tráfego
+        </button>
+      </div>
+
+      {/* Reset View */}
+      <button
+        onClick={handleResetView}
+        className={`bg-white rounded-lg shadow-lg border border-gray-200 ${isDashboardVariant ? 'w-8 h-8' : 'w-10 h-10'} flex items-center justify-center hover:bg-gray-50 transition-colors`}
+        title="Resetar visualização"
+      >
+        <RotateCcw size={isDashboardVariant ? 14 : 16} />
+      </button>
+    </div>
+  );
+
+  const legend = (
+    <div className={`absolute bottom-4 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3 ${isDashboardVariant ? 'text-xs' : ''}`}>
+      <h4 className="text-sm font-medium text-gray-900 mb-2">Legenda</h4>
+      <div className="space-y-2 text-xs">
+        <div className="flex items-center gap-2">
+          <Navigation size={12} className="text-green-500" />
+          <span>Em movimento</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Square size={12} className="text-yellow-500" />
+          <span>Parado (ligado)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Circle size={12} className="text-blue-500" />
+          <span>Parado (desligado)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Circle size={12} className="text-gray-400" />
+          <span>Offline</span>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (isDashboardVariant) {
+    return (
+      <div className={className}>
+        <div className={`relative ${mapHeightClass}`}>
+          <div className="w-full h-full" ref={mapRef} />
+          {mapControls}
+          {legend}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 border-t border-gray-200 bg-gray-50 p-3 sm:p-4">
+          <div className="text-center">
+            <p className="text-base sm:text-lg font-semibold text-green-600">{onlineDevices.length}</p>
+            <p className="text-xs text-gray-600">Online</p>
+          </div>
+          <div className="text-center">
+            <p className="text-base sm:text-lg font-semibold text-blue-600">{movingDevices.length}</p>
+            <p className="text-xs text-gray-600">Em movimento</p>
+          </div>
+          <div className="text-center">
+            <p className="text-base sm:text-lg font-semibold text-yellow-600">{stoppedDevices.length}</p>
+            <p className="text-xs text-gray-600">Parados</p>
+          </div>
+          <div className="text-center">
+            <p className="text-base sm:text-lg font-semibold text-gray-600">{offlineDevices.length}</p>
+            <p className="text-xs text-gray-600">Offline</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -260,99 +454,10 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
         {/* Map */}
         <div className="lg:col-span-3">
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="relative h-[600px]" ref={mapRef}>
-              {/* Map Controls Overlay */}
-              <div className="absolute top-4 right-4 z-10 space-y-2">
-                {/* Zoom Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
-                  <button
-                    onClick={handleZoomIn}
-                    className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
-                  >
-                    <ZoomIn size={16} />
-                  </button>
-                  <button
-                    onClick={handleZoomOut}
-                    className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                  >
-                    <ZoomOut size={16} />
-                  </button>
-                </div>
-
-                {/* Map Style Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
-                  <div className="space-y-1">
-                    <button
-                      onClick={() => handleMapStyleChange('roadmap')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'roadmap' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Mapa
-                    </button>
-                    <button
-                      onClick={() => handleMapStyleChange('satellite')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'satellite' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Satélite
-                    </button>
-                    <button
-                      onClick={() => handleMapStyleChange('terrain')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'terrain' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Terreno
-                    </button>
-                  </div>
-                </div>
-
-                {/* Layer Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
-                  <button
-                    onClick={toggleTraffic}
-                    className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                      showTraffic ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    Tráfego
-                  </button>
-                </div>
-
-                {/* Reset View */}
-                <button
-                  onClick={handleResetView}
-                  className="bg-white rounded-lg shadow-lg border border-gray-200 w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                  title="Resetar visualização"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              </div>
-
-              {/* Legend */}
-              <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3">
-                <h4 className="text-sm font-medium text-gray-900 mb-2">Legenda</h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <Navigation size={12} className="text-green-500" />
-                    <span>Em movimento</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Square size={12} className="text-yellow-500" />
-                    <span>Parado (ligado)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Circle size={12} className="text-blue-500" />
-                    <span>Parado (desligado)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Circle size={12} className="text-gray-400" />
-                    <span>Offline</span>
-                  </div>
-                </div>
-              </div>
+            <div className={`relative w-full ${mapHeightClass}`}>
+              <div className="w-full h-full" ref={mapRef} />
+              {mapControls}
+              {legend}
             </div>
           </div>
         </div>
@@ -420,13 +525,13 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
             <div className="max-h-80 overflow-y-auto">
               {(showOfflineDevices ? devices : onlineDevices).map((device) => {
                 const StatusIcon = getStatusIcon(device);
-                const isSelected = selectedDevice === device.id;
-                
+                const isSelected = activeSelectedDevice === device.id;
+
                 return (
                   <button
                     key={device.id}
                     onClick={() => {
-                      setSelectedDevice(device.id);
+                      handleDeviceSelection(device.id);
                       if (map && device.position) {
                         map.setCenter({ lat: device.position.lat, lng: device.position.lon });
                         map.setZoom(15);
@@ -459,8 +564,8 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
           </div>
 
           {/* Selected Device Details */}
-          {selectedDevice && (() => {
-            const device = devices.find(d => d.id === selectedDevice);
+          {activeSelectedDevice && (() => {
+            const device = devices.find(d => d.id === activeSelectedDevice);
             if (!device) return null;
 
             return (
