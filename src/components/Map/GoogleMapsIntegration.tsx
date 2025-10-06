@@ -116,6 +116,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = (prop
 
     const filteredDevices = showOfflineDevices ? devices : devices.filter(d => d.status === 'online');
 
+    const bounds = new google.maps.LatLngBounds();
+    let hasVisibleDevice = false;
+
     filteredDevices.forEach((device) => {
       if (!device.position) return;
 
@@ -123,6 +126,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = (prop
         lat: device.position.lat,
         lng: device.position.lon
       };
+
+      bounds.extend(position);
+      hasVisibleDevice = true;
 
       // Create custom marker icon based on device status
       const getMarkerIcon = () => {
@@ -197,6 +203,16 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = (prop
 
       markersRef.current.push(marker);
     });
+
+    if (hasVisibleDevice) {
+      if (markersRef.current.length === 1) {
+        mapInstance.setCenter(bounds.getCenter());
+        const currentZoom = mapInstance.getZoom() ?? 12;
+        mapInstance.setZoom(Math.max(currentZoom, 14));
+      } else {
+        mapInstance.fitBounds(bounds, { top: 48, right: 48, bottom: 48, left: 48 } as google.maps.Padding);
+      }
+    }
   };
 
   const handleZoomIn = () => {
@@ -253,42 +269,7 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = (prop
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, showOfflineDevices, activeSelectedDevice]);
-
-  useEffect(() => {
-    if (!map || !activeSelectedDevice) return;
-
-    const device = devices.find(d => d.id === activeSelectedDevice && d.position);
-    if (!device?.position) return;
-
-    const newPosition = {
-      lat: device.position.lat,
-      lng: device.position.lon
-    };
-
-    const hasDeviceChanged = lastCenteredDeviceRef.current !== activeSelectedDevice;
-    const hasPositionChanged =
-      !lastCenteredPositionRef.current ||
-      lastCenteredPositionRef.current.lat !== newPosition.lat ||
-      lastCenteredPositionRef.current.lng !== newPosition.lng;
-
-    if (hasDeviceChanged || hasPositionChanged) {
-      map.panTo(newPosition);
-      if ((map.getZoom() || 12) < 14) {
-        map.setZoom(14);
-      }
-
-      lastCenteredDeviceRef.current = activeSelectedDevice;
-      lastCenteredPositionRef.current = newPosition;
-    }
-  }, [map, activeSelectedDevice, devices]);
-
-  const handleDeviceSelection = (deviceId: string) => {
-    if (!isControlled) {
-      setInternalSelectedDevice(deviceId);
-    }
-    onDeviceSelect?.(deviceId);
-  };
+  }, [map, devices, vehicles, showOfflineDevices, selectedDevice]);
 
   const getStatusColor = (device: Device) => {
     if (device.status === 'offline') return 'text-gray-400';
