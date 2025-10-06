@@ -92,9 +92,9 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
   return (
     <GoogleMapsIntegration
       apiKey={googleMapsApiKey}
-      onApiKeyChange={setGoogleMapsApiKey}
       devices={devices}
       vehicles={vehicles}
+      variant="full"
     />
   );
 };
