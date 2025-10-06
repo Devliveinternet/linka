@@ -3,15 +3,15 @@ import WebSocket from "ws";
 import https from "https";
 // import https from "https"; // se seu Traccar for HTTPS self-signed, veja o comentário mais abaixo
 
+import { buildTraccarWsUrl, parseTraccarBaseUrl } from "../utils/traccarUrls.js";
+
 const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082 OU http://localhost:8082/api
 const user    = process.env.TRACCAR_USER;     // admin (ou outro)
 const pass    = process.env.TRACCAR_PASS;     // senha
 const token   = process.env.TRACCAR_TOKEN;    // alternativa usando token
 const allowSelfSigned = String(process.env.ALLOW_SELF_SIGNED || '') === 'true';
 
-const trimmedBaseURL = baseURL?.replace(/\/+$/, '');
-const httpBaseURL = trimmedBaseURL?.endsWith('/api') ? trimmedBaseURL.slice(0, -4) : trimmedBaseURL;
-const apiBaseURL = httpBaseURL ? `${httpBaseURL}/api` : undefined;
+const { httpBaseURL, apiBaseURL, error: baseUrlError } = parseTraccarBaseUrl(baseURL);
 
 // --- Registro dos clientes SSE do navegador
 const sseClients = new Set();
@@ -22,13 +22,6 @@ export function addSseClient(res) {
 function broadcast(type, payload) {
   const chunk = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
   for (const res of sseClients) res.write(chunk);
-}
-
-function buildWsUrl(base) {
-  const trimmed = base.replace(/\/+$/, '');
-  const proto = trimmed.startsWith('https') ? 'wss' : 'ws';
-  const host  = trimmed.replace(/^https?:\/\//, '');
-  return `${proto}://${host}/api/socket`;
 }
 
 function logAxiosError(tag, e) {
@@ -43,6 +36,9 @@ let reconnectTimer;
 let backoff = 1000;
 
 async function createSession() {
+  if (!apiBaseURL) {
+    throw new Error("TRACCAR_BASE_URL inválido; não é possível montar URL da sessão");
+  }
   const url = `${apiBaseURL}/session`;
   const httpsCfg = allowSelfSigned ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {};
 
@@ -114,7 +110,10 @@ async function createSession() {
 
 
 function openWs(cookie) {
-  const wsUrl = buildWsUrl(httpBaseURL);
+  if (!httpBaseURL) {
+    throw new Error("TRACCAR_BASE_URL inválido; não é possível montar URL do WebSocket");
+  }
+  const wsUrl = buildTraccarWsUrl(httpBaseURL);
   const wsOpts = { headers: { Cookie: cookie } };
   if (allowSelfSigned) wsOpts.rejectUnauthorized = false;
 
@@ -167,7 +166,8 @@ export function startRealtimeBridge() {
   }
 
   if (!httpBaseURL || !apiBaseURL) {
-    console.warn("TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api.");
+    const extra = baseUrlError ? ` (${baseUrlError})` : "";
+    console.warn(`TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api.${extra}`);
     return;
   }
 
