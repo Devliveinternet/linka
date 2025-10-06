@@ -4,6 +4,12 @@ import https from "https";
 // import https from "https"; // se seu Traccar for HTTPS self-signed, veja o comentário mais abaixo
 
 import { buildTraccarWsUrl, parseTraccarBaseUrl } from "../utils/traccarUrls.js";
+import {
+  getDeviceAccess,
+  filterPositionsByAccess,
+  filterDevicesByAccess,
+  filterEventsByAccess,
+} from "../users/deviceAssignments.js";
 
 const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082 OU http://localhost:8082/api
 const user    = process.env.TRACCAR_USER;     // admin (ou outro)
@@ -15,13 +21,33 @@ const { httpBaseURL, apiBaseURL, error: baseUrlError } = parseTraccarBaseUrl(bas
 
 // --- Registro dos clientes SSE do navegador
 const sseClients = new Set();
-export function addSseClient(res) {
-  sseClients.add(res);
-  res.on("close", () => sseClients.delete(res));
+export function addSseClient(user, res) {
+  const client = { user, res };
+  sseClients.add(client);
+  res.on("close", () => sseClients.delete(client));
 }
 function broadcast(type, payload) {
-  const chunk = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const res of sseClients) res.write(chunk);
+  for (const client of sseClients) {
+    const filtered = filterPayloadForClient(type, payload, client.user);
+    if (filtered == null) continue;
+    const chunk = `event: ${type}\ndata: ${JSON.stringify(filtered)}\n\n`;
+    client.res.write(chunk);
+  }
+}
+
+function filterPayloadForClient(type, payload, user) {
+  if (!user) return null;
+  const access = getDeviceAccess(user);
+  switch (type) {
+    case "positions":
+      return filterPositionsByAccess(payload, access);
+    case "devices":
+      return filterDevicesByAccess(payload, access);
+    case "events":
+      return filterEventsByAccess(payload, access);
+    default:
+      return payload;
+  }
 }
 
 function logAxiosError(tag, e) {

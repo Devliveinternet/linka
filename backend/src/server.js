@@ -18,10 +18,21 @@ import {
   sanitizeUser,
   listUsersFor,
   createUser,
+  getAllUsers,
 } from "./users/userStore.js";
 import { verifyPassword } from "./users/crypto.js";
 import { createSession, revokeSession } from "./users/sessionStore.js";
 import { requireAuth } from "./users/authMiddleware.js";
+import {
+  initializeDeviceAssignments,
+  ensureMasterDeviceAssignments,
+  getDeviceAccess,
+  filterDevicesByAccess,
+  filterPositionsByAccess,
+  filterEventsByAccess,
+  filterTripsByAccess,
+  canAccessDevice,
+} from "./users/deviceAssignments.js";
 
 // ----------------- setup -----------------
 const app  = express();
@@ -29,6 +40,12 @@ const PORT = process.env.PORT || 3000;
 const knotsToKmh = (knots = 0) => Math.round(knots * 1.852);
 
 initializeUserStore();
+initializeDeviceAssignments();
+for (const user of getAllUsers()) {
+  if (user.role === "master") {
+    ensureMasterDeviceAssignments(user.id);
+  }
+}
 
 const origins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
 app.use(cors({ origin: origins.length ? origins : true }));
@@ -92,52 +109,94 @@ function send(res, promise, { soft404 = false, soft400 = false } = {}) {
     });
 }
 
+function sendFiltered(res, fetcher, filter, { soft404 = false, soft400 = false } = {}) {
+  Promise.resolve()
+    .then(fetcher)
+    .then((data) => res.json(filter ? filter(data) : data))
+    .catch((e) => {
+      const status = e.response?.status || 500;
+      const body   = e.response?.data;
+      console.error("Traccar error:", status, body);
+      if ((soft404 && status === 404) || (soft400 && status === 400)) {
+        return res.json([]);
+      }
+      res.status(status).json({ error: e.message, status, details: body });
+    });
+}
+
 // ----------------- health -----------------
 app.get("/health", (_req, res) => res.send("ok"));
 
 // ----------------- REST proxy -----------------
-traccarRouter.get("/devices",   (_req, res) => send(res, listDevices()));
-traccarRouter.get("/positions", (_req, res) => send(res, listPositions()));
+traccarRouter.get("/devices", (req, res) => {
+  const access = getDeviceAccess(req.user);
+  sendFiltered(res, () => listDevices(), (devices) => filterDevicesByAccess(devices, access));
+});
+
+traccarRouter.get("/positions", (req, res) => {
+  const access = getDeviceAccess(req.user);
+  sendFiltered(res, () => listPositions(), (positions) => filterPositionsByAccess(positions, access));
+});
 
 traccarRouter.get("/events", (req, res) => {
+  const access = getDeviceAccess(req.user);
   const now  = new Date();
   const to   = req.query.to   || now.toISOString();
   const from = req.query.from || new Date(now.getTime() - 24*60*60*1000).toISOString();
   const params = { ...req.query, from, to };
-  send(res, listEvents(params), { soft404: true, soft400: true });
+  if (!access.allowAll && params.deviceId && !canAccessDevice(access, params.deviceId)) {
+    return res.json([]);
+  }
+  sendFiltered(
+    res,
+    () => listEvents(params),
+    (events) => filterEventsByAccess(events, access),
+    { soft404: true, soft400: true }
+  );
 });
 
 traccarRouter.get("/trips", (req, res) => {
+  const access = getDeviceAccess(req.user);
   const { deviceId, from, to } = req.query;
   if (!deviceId || !from || !to) {
     console.warn("Trips sem params necessários → []");
     return res.json([]);
   }
-  send(res, listTrips({ deviceId, from, to }), { soft400: true, soft404: true });
+  if (!canAccessDevice(access, deviceId)) {
+    return res.json([]);
+  }
+  sendFiltered(
+    res,
+    () => listTrips({ deviceId, from, to }),
+    (trips) => filterTripsByAccess(trips, access),
+    { soft400: true, soft404: true }
+  );
 });
 
 traccarRouter.get("/geofences", (_req, res) => send(res, listGeofences()));
 
 // ----------------- SSE (tempo real) -----------------
-traccarRouter.get("/stream", (_req, res) => {
+traccarRouter.get("/stream", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
   res.write('event: hello\ndata: "connected"\n\n');
-  addSseClient(res);
+  addSseClient(req.user, res);
 });
 
 // ----------------- helpers REST extras -----------------
 const posTimestamp = (p) =>
   new Date(p.fixTime || p.deviceTime || p.serverTime || 0).getTime();
 
-traccarRouter.get("/positions/latest", async (_req, res) => {
+traccarRouter.get("/positions/latest", async (req, res) => {
+  const access = getDeviceAccess(req.user);
   try {
     const all = await listPositions();
+    const filtered = filterPositionsByAccess(all, access);
     const byDevice = new Map();
-    for (const p of all || []) {
+    for (const p of filtered || []) {
       if (p?.deviceId == null) continue;
       const prev = byDevice.get(p.deviceId);
       if (!prev || posTimestamp(p) >= posTimestamp(prev)) byDevice.set(p.deviceId, p);
@@ -151,11 +210,13 @@ traccarRouter.get("/positions/latest", async (_req, res) => {
   }
 });
 
-traccarRouter.get("/devices/map", async (_req, res) => {
+traccarRouter.get("/devices/map", async (req, res) => {
+  const access = getDeviceAccess(req.user);
   try {
     const devs = await listDevices();
+    const filtered = filterDevicesByAccess(devs, access);
     const map = {};
-    for (const d of devs || []) map[d.id] = d.name || `Device ${d.id}`;
+    for (const d of filtered || []) map[d.id] = d.name || `Device ${d.id}`;
     res.json(map);
   } catch {
     res.json({});
@@ -164,26 +225,33 @@ traccarRouter.get("/devices/map", async (_req, res) => {
 
 // últimas N horas por device (default 2h)
 traccarRouter.get("/route", (req, res) => {
+  const access = getDeviceAccess(req.user);
   const { deviceId } = req.query;
   const hours = Number(req.query.hours ?? 2);
   if (!deviceId) return res.json([]);
+  if (!canAccessDevice(access, deviceId)) return res.json([]);
   const to = new Date();
   const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
-  send(
+  sendFiltered(
     res,
-    listRoute({ deviceId, from: from.toISOString(), to: to.toISOString() }),
+    () => listRoute({ deviceId, from: from.toISOString(), to: to.toISOString() }),
+    (positions) => filterPositionsByAccess(positions, access),
     { soft404: true, soft400: true }
   );
 });
 
 // devices enriquecidos (nome, status, lastUpdate, última posição, speed, address)
-traccarRouter.get("/devices/enriched", async (_req, res) => {
+traccarRouter.get("/devices/enriched", async (req, res) => {
+  const access = getDeviceAccess(req.user);
   try {
     const devices = await listDevices();
     const positions = await listPositions();
 
+    const relevantDevices = filterDevicesByAccess(devices, access);
+    const relevantPositions = filterPositionsByAccess(positions, access);
+
     const latestMap = new Map();
-    for (const p of positions || []) {
+    for (const p of relevantPositions || []) {
       const key = p.deviceId;
       const curr = latestMap.get(key);
       const t = posTimestamp(p);
@@ -192,7 +260,7 @@ traccarRouter.get("/devices/enriched", async (_req, res) => {
     }
 
     const now = Date.now();
-    const enriched = (devices || []).map((d) => {
+    const enriched = (relevantDevices || []).map((d) => {
       const pos = latestMap.get(d.id);
       const lastIso = d.lastUpdate || pos?.serverTime || pos?.deviceTime || pos?.fixTime;
       const lastMs  = lastIso ? new Date(lastIso).getTime() : 0;

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { hashPassword, verifyPassword } from "./crypto.js";
+import { ensureMasterDeviceAssignments } from "./deviceAssignments.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -266,6 +267,7 @@ export function createUser(actor, payload = {}) {
     };
     const updated = [...allUsers, user];
     writeUsers(updated);
+    ensureMasterDeviceAssignments(user.id);
     return sanitizeUser(user);
   }
 
