@@ -291,6 +291,58 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     );
   }
 
+  const devicesWithPosition = React.useMemo(
+    () => devices.filter((device) => device.position),
+    [devices]
+  );
+
+  const placeholderBounds = React.useMemo(() => {
+    if (devicesWithPosition.length === 0) {
+      return {
+        minLat: -17,
+        maxLat: -16,
+        minLng: -50,
+        maxLng: -49
+      };
+    }
+
+    const lats = devicesWithPosition.map((device) => device.position!.lat);
+    const lngs = devicesWithPosition.map((device) => device.position!.lon);
+
+    return {
+      minLat: Math.min(...lats),
+      maxLat: Math.max(...lats),
+      minLng: Math.min(...lngs),
+      maxLng: Math.max(...lngs)
+    };
+  }, [devicesWithPosition]);
+
+  const projectToPlaceholder = React.useCallback(
+    (lat: number, lng: number) => {
+      const {
+        minLat,
+        maxLat,
+        minLng,
+        maxLng
+      } = placeholderBounds;
+
+      const latRange = Math.max(maxLat - minLat, 0.0001);
+      const lngRange = Math.max(maxLng - minLng, 0.0001);
+
+      const normalizedLng = (lng - minLng) / lngRange;
+      const normalizedLat = (maxLat - lat) / latRange;
+
+      const padding = 10;
+      const usableSpace = 100 - padding * 2;
+
+      return {
+        left: `${padding + normalizedLng * usableSpace}%`,
+        top: `${padding + normalizedLat * usableSpace}%`
+      };
+    },
+    [placeholderBounds]
+  );
+
   // Fallback to placeholder map if no API key is configured
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -311,10 +363,10 @@ export const FleetMap: React.FC<FleetMapProps> = ({
         
         {/* Device markers overlay for placeholder */}
         <div className="absolute inset-2 sm:inset-4">
-          {devices.map((device, index) => {
+          {devicesWithPosition.map((device) => {
             const StatusIcon = getStatusIcon(device);
             const isSelected = selectedDevice === device.id;
-            
+
             return (
               <button
                 key={device.id}
@@ -322,10 +374,10 @@ export const FleetMap: React.FC<FleetMapProps> = ({
                 className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200 ${
                   isSelected ? 'scale-125 z-10' : 'hover:scale-110'
                 }`}
-                style={{
-                  left: `${20 + (index * 15)}%`,
-                  top: `${30 + (index * 10)}%`
-                }}
+                style={projectToPlaceholder(
+                  device.position!.lat,
+                  device.position!.lon
+                )}
                 title={`${device.model} - ${device.status}`}
               >
                 <div className={`p-1 sm:p-2 rounded-full bg-white shadow-lg border-2 ${
