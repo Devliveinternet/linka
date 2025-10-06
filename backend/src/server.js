@@ -12,14 +12,70 @@ import {
 } from "./services/traccarClient.js";
 
 import { addSseClient, startRealtimeBridge } from "./realtime/traccarBridge.js";
+import {
+  initializeUserStore,
+  getUserByEmail,
+  sanitizeUser,
+  listUsersFor,
+  createUser,
+} from "./users/userStore.js";
+import { verifyPassword } from "./users/crypto.js";
+import { createSession, revokeSession } from "./users/sessionStore.js";
+import { requireAuth } from "./users/authMiddleware.js";
 
 // ----------------- setup -----------------
 const app  = express();
 const PORT = process.env.PORT || 3000;
 const knotsToKmh = (knots = 0) => Math.round(knots * 1.852);
 
+initializeUserStore();
+
 const origins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
 app.use(cors({ origin: origins.length ? origins : true }));
+app.use(express.json());
+
+const traccarRouter = express.Router();
+traccarRouter.use(requireAuth);
+
+// ----------------- auth -----------------
+app.post("/auth/login", (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: "Informe e-mail e senha" });
+  }
+
+  const user = getUserByEmail(email);
+  if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(401).json({ error: "Credenciais inválidas" });
+  }
+
+  const session = createSession(user.id);
+  res.json({ token: session.token, expiresAt: session.expiresAt, user: sanitizeUser(user) });
+});
+
+app.get("/auth/me", requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.post("/auth/logout", requireAuth, (req, res) => {
+  revokeSession(req.authToken);
+  res.json({ success: true });
+});
+
+// ----------------- user management -----------------
+app.get("/users", requireAuth, (req, res) => {
+  const users = listUsersFor(req.user);
+  res.json({ users });
+});
+
+app.post("/users", requireAuth, (req, res) => {
+  try {
+    const created = createUser(req.user, req.body || {});
+    res.status(201).json({ user: created });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // helper para padronizar respostas/erros
 function send(res, promise, { soft404 = false, soft400 = false } = {}) {
@@ -40,10 +96,10 @@ function send(res, promise, { soft404 = false, soft400 = false } = {}) {
 app.get("/health", (_req, res) => res.send("ok"));
 
 // ----------------- REST proxy -----------------
-app.get("/traccar/devices",   (_req, res) => send(res, listDevices()));
-app.get("/traccar/positions", (_req, res) => send(res, listPositions()));
+traccarRouter.get("/devices",   (_req, res) => send(res, listDevices()));
+traccarRouter.get("/positions", (_req, res) => send(res, listPositions()));
 
-app.get("/traccar/events", (req, res) => {
+traccarRouter.get("/events", (req, res) => {
   const now  = new Date();
   const to   = req.query.to   || now.toISOString();
   const from = req.query.from || new Date(now.getTime() - 24*60*60*1000).toISOString();
@@ -51,7 +107,7 @@ app.get("/traccar/events", (req, res) => {
   send(res, listEvents(params), { soft404: true, soft400: true });
 });
 
-app.get("/traccar/trips", (req, res) => {
+traccarRouter.get("/trips", (req, res) => {
   const { deviceId, from, to } = req.query;
   if (!deviceId || !from || !to) {
     console.warn("Trips sem params necessários → []");
@@ -60,10 +116,10 @@ app.get("/traccar/trips", (req, res) => {
   send(res, listTrips({ deviceId, from, to }), { soft400: true, soft404: true });
 });
 
-app.get("/traccar/geofences", (_req, res) => send(res, listGeofences()));
+traccarRouter.get("/geofences", (_req, res) => send(res, listGeofences()));
 
 // ----------------- SSE (tempo real) -----------------
-app.get("/traccar/stream", (_req, res) => {
+traccarRouter.get("/stream", (_req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -77,7 +133,7 @@ app.get("/traccar/stream", (_req, res) => {
 const posTimestamp = (p) =>
   new Date(p.fixTime || p.deviceTime || p.serverTime || 0).getTime();
 
-app.get("/traccar/positions/latest", async (_req, res) => {
+traccarRouter.get("/positions/latest", async (_req, res) => {
   try {
     const all = await listPositions();
     const byDevice = new Map();
@@ -95,7 +151,7 @@ app.get("/traccar/positions/latest", async (_req, res) => {
   }
 });
 
-app.get("/traccar/devices/map", async (_req, res) => {
+traccarRouter.get("/devices/map", async (_req, res) => {
   try {
     const devs = await listDevices();
     const map = {};
@@ -107,7 +163,7 @@ app.get("/traccar/devices/map", async (_req, res) => {
 });
 
 // últimas N horas por device (default 2h)
-app.get("/traccar/route", (req, res) => {
+traccarRouter.get("/route", (req, res) => {
   const { deviceId } = req.query;
   const hours = Number(req.query.hours ?? 2);
   if (!deviceId) return res.json([]);
@@ -121,7 +177,7 @@ app.get("/traccar/route", (req, res) => {
 });
 
 // devices enriquecidos (nome, status, lastUpdate, última posição, speed, address)
-app.get("/traccar/devices/enriched", async (_req, res) => {
+traccarRouter.get("/devices/enriched", async (_req, res) => {
   try {
     const devices = await listDevices();
     const positions = await listPositions();
@@ -168,6 +224,8 @@ app.get("/traccar/devices/enriched", async (_req, res) => {
     res.status(500).json({ error: "failed_to_enrich_devices" });
   }
 });
+
+app.use("/traccar", traccarRouter);
 
 // ----------------- start -----------------
 app.listen(PORT, () => {

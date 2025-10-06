@@ -8,9 +8,22 @@ interface HeaderProps {
     role: string;
   };
   alertCount: number;
+  onLogout: () => void | Promise<void>;
 }
 
-export const Header: React.FC<HeaderProps> = ({ user, alertCount }) => {
+const roleLabels: Record<string, string> = {
+  admin: 'Administrador',
+  master: 'Usuário Mestre',
+  child: 'Usuário Filho',
+};
+
+export const Header: React.FC<HeaderProps> = ({ user, alertCount, onLogout }) => {
+  const handleLogout = () => {
+    Promise.resolve(onLogout()).catch((err) => {
+      console.warn('Erro ao encerrar sessão', err);
+    });
+  };
+
   return (
     <header className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4">
       <div className="flex items-center justify-between">
@@ -39,14 +52,17 @@ export const Header: React.FC<HeaderProps> = ({ user, alertCount }) => {
           <div className="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-gray-200">
             <div className="text-right hidden sm:block">
               <div className="text-sm font-medium text-gray-900">{user.name}</div>
-              <div className="text-xs text-gray-500 capitalize">{user.role}</div>
+              <div className="text-xs text-gray-500 capitalize">{roleLabels[user.role] || user.role}</div>
             </div>
             <div className="relative">
               <button className="flex items-center gap-2 p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
                 <User size={18} />
               </button>
             </div>
-            <button className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+            <button
+              onClick={handleLogout}
+              className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
               <LogOut size={18} />
             </button>
           </div>
