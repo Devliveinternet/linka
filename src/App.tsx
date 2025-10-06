@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation, Location } from 'react-router-dom';
 import { Sidebar } from './components/Layout/Sidebar';
 import { Header } from './components/Layout/Header';
 import { DashboardView } from './components/Dashboard/DashboardView';
@@ -45,6 +46,15 @@ function canAcknowledgeAlerts(user: AuthUser) {
   return true;
 }
 
+const LoadingScreen: React.FC<{ message: string }> = ({ message }) => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="text-center space-y-3">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+      <p className="text-gray-600">{message}</p>
+    </div>
+  </div>
+);
+
 const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void> }> = ({ user, onLogout }) => {
   const allowedViews = useMemo(() => getAllowedViewsForUser(user), [user]);
   const [activeView, setActiveView] = useState<typeof VIEW_ORDER[number]>(
@@ -87,14 +97,7 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
   };
 
   if (loading && devices.length === 0) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Conectando ao servidor Traccar...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen message="Conectando ao servidor Traccar..." />;
   }
 
   if (error && devices.length === 0) {
@@ -181,25 +184,81 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
   );
 };
 
-function App() {
-  const { user, login, logout, isBootstrapping, isSubmitting, error } = useAuth();
+const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) => {
+  const { user, isBootstrapping } = useAuth();
+  const location = useLocation();
 
   if (isBootstrapping) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="text-gray-600">Carregando sessão...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen message="Carregando sessão..." />;
   }
 
   if (!user) {
-    return <LoginPage onLogin={login} isSubmitting={isSubmitting} serverError={error} />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  return <AuthenticatedApp user={user} onLogout={logout} />;
+  return children;
+};
+
+type LoginLocationState = { from?: Location };
+
+const LoginRoute: React.FC = () => {
+  const { login, user, isSubmitting, error, isBootstrapping } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const fromLocation = (location.state as LoginLocationState | undefined)?.from;
+  const redirectPath = useMemo(() => {
+    if (!fromLocation?.pathname) {
+      return '/';
+    }
+    const search = fromLocation.search ?? '';
+    const hash = fromLocation.hash ?? '';
+    const path = fromLocation.pathname || '/';
+    return `${path}${search}${hash}`;
+  }, [fromLocation]);
+
+  const handleLogin = useCallback(
+    async (email: string, password: string) => {
+      await login(email, password);
+      navigate(redirectPath, { replace: true });
+    },
+    [login, navigate, redirectPath]
+  );
+
+  if (isBootstrapping) {
+    return <LoadingScreen message="Carregando sessão..." />;
+  }
+
+  if (user) {
+    return <Navigate to={redirectPath} replace />;
+  }
+
+  return <LoginPage onLogin={handleLogin} isSubmitting={isSubmitting} serverError={error} />;
+};
+
+const ProtectedAppRoute: React.FC = () => {
+  const { user, logout } = useAuth();
+  if (!user) {
+    return null;
+  }
+  const handleLogout = useCallback(() => logout(), [logout]);
+  return <AuthenticatedApp user={user} onLogout={handleLogout} />;
+};
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginRoute />} />
+      <Route
+        path="/*"
+        element={(
+          <RequireAuth>
+            <ProtectedAppRoute />
+          </RequireAuth>
+        )}
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 }
 
 export default App;
