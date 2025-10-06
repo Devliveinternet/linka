@@ -20,6 +20,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const lastBoundsRef = useRef<google.maps.LatLngBounds | null>(null);
 
   // Load API key from localStorage
   useEffect(() => {
@@ -94,6 +95,9 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     markersRef.current.forEach(marker => marker.setMap(null));
     markersRef.current = [];
 
+    const bounds = new google.maps.LatLngBounds();
+    let hasVisibleDevice = false;
+
     devices.forEach((device) => {
       if (!device.position) return;
 
@@ -102,13 +106,32 @@ export const FleetMap: React.FC<FleetMapProps> = ({
         lng: device.position.lon
       };
 
+      const speedValue = device.position.speed ?? 0;
+      const ignitionOn = Boolean(device.position.ignition);
+      const odometerValue = device.position.odometer;
+      const formattedOdometer =
+        typeof odometerValue === 'number' ? `${odometerValue.toLocaleString()} km` : 'N/A';
+      const fuelValue = device.position.fuel;
+      const formattedFuel = typeof fuelValue === 'number' ? `${fuelValue}%` : null;
+      const formattedSpeed = `${speedValue} km/h`;
+      const formattedHeading =
+        typeof device.position.heading === 'number'
+          ? `${device.position.heading.toFixed(0)}°`
+          : 'N/A';
+      const lastUpdate = device.lastUpdate
+        ? new Date(device.lastUpdate).toLocaleString('pt-BR')
+        : 'N/A';
+
+      bounds.extend(position);
+      hasVisibleDevice = true;
+
       // Create custom marker icon based on device status
       const getMarkerIcon = () => {
         const vehicleType = getVehicleTypeFromDevice(device.id, vehicles);
         const vehiclePhoto = getVehiclePhotoFromDevice(device.id, vehicles);
-        const isMoving = device.position!.ignition && device.position!.speed > 5;
+        const isMoving = ignitionOn && speedValue > 5;
         const isSelected = selectedDevice === device.id;
-        
+
         return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
       };
 
@@ -135,24 +158,28 @@ export const FleetMap: React.FC<FleetMapProps> = ({
             ${device.position ? `
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Velocidade:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.speed} km/h</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${formattedSpeed}</span>
               </div>
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Ignição:</span>
-                <span style="color: ${device.position.ignition ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.ignition ? 'Ligada' : 'Desligada'}</span>
+                <span style="color: ${ignitionOn ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${ignitionOn ? 'Ligada' : 'Desligada'}</span>
               </div>
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Odômetro:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.odometer.toLocaleString()} km</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedOdometer}</span>
               </div>
-              ${device.position.fuel ? `
+              ${formattedFuel ? `
                 <div style="margin-bottom: 4px;">
                   <span style="color: #6B7280; font-size: 12px;">Combustível:</span>
-                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.fuel}%</span>
+                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedFuel}</span>
                 </div>
               ` : ''}
+              <div style="margin-bottom: 4px;">
+                <span style="color: #6B7280; font-size: 12px;">Direção:</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedHeading}</span>
+              </div>
               <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5E7EB;">
-                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${new Date(device.lastUpdate).toLocaleString('pt-BR')}</span>
+                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${lastUpdate}</span>
               </div>
             ` : ''}
           </div>
@@ -175,6 +202,18 @@ export const FleetMap: React.FC<FleetMapProps> = ({
 
       markersRef.current.push(marker);
     });
+
+    if (hasVisibleDevice) {
+      lastBoundsRef.current = bounds;
+
+      if (markersRef.current.length === 1) {
+        mapInstance.setCenter(bounds.getCenter());
+        const currentZoom = mapInstance.getZoom() ?? 12;
+        mapInstance.setZoom(Math.max(currentZoom, 14));
+      } else {
+        mapInstance.fitBounds(bounds, { top: 32, right: 32, bottom: 32, left: 32 } as google.maps.Padding);
+      }
+    }
   };
 
   // Map control handlers
@@ -194,8 +233,17 @@ export const FleetMap: React.FC<FleetMapProps> = ({
 
   const handleResetView = () => {
     if (map) {
-      map.setCenter({ lat: -16.6799, lng: -49.255 });
-      map.setZoom(12);
+      if (lastBoundsRef.current) {
+        if (markersRef.current.length <= 1) {
+          map.setCenter(lastBoundsRef.current.getCenter());
+          map.setZoom(Math.max(map.getZoom() ?? 12, 14));
+        } else {
+          map.fitBounds(lastBoundsRef.current, { top: 32, right: 32, bottom: 32, left: 32 } as google.maps.Padding);
+        }
+      } else {
+        map.setCenter({ lat: -16.6799, lng: -49.255 });
+        map.setZoom(12);
+      }
     }
   };
 
@@ -211,7 +259,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, selectedDevice]);
+  }, [map, devices, vehicles, selectedDevice]);
 
   // Simulate real-time position updates
   useEffect(() => {

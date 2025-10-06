@@ -82,6 +82,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
 
     const filteredDevices = showOfflineDevices ? devices : devices.filter(d => d.status === 'online');
 
+    const bounds = new google.maps.LatLngBounds();
+    let hasVisibleDevice = false;
+
     filteredDevices.forEach((device) => {
       if (!device.position) return;
 
@@ -90,13 +93,32 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
         lng: device.position.lon
       };
 
+      const speedValue = device.position.speed ?? 0;
+      const ignitionOn = Boolean(device.position.ignition);
+      const odometerValue = device.position.odometer;
+      const formattedOdometer =
+        typeof odometerValue === 'number' ? `${odometerValue.toLocaleString()} km` : 'N/A';
+      const fuelValue = device.position.fuel;
+      const formattedFuel = typeof fuelValue === 'number' ? `${fuelValue}%` : null;
+      const formattedSpeed = `${speedValue} km/h`;
+      const formattedHeading =
+        typeof device.position.heading === 'number'
+          ? `${device.position.heading.toFixed(0)}°`
+          : 'N/A';
+      const lastUpdate = device.lastUpdate
+        ? new Date(device.lastUpdate).toLocaleString('pt-BR')
+        : 'N/A';
+
+      bounds.extend(position);
+      hasVisibleDevice = true;
+
       // Create custom marker icon based on device status
       const getMarkerIcon = () => {
         const vehicleType = getVehicleTypeFromDevice(device.id, vehicles);
         const vehiclePhoto = getVehiclePhotoFromDevice(device.id, vehicles);
-        const isMoving = device.position!.ignition && device.position!.speed > 5;
+        const isMoving = ignitionOn && speedValue > 5;
         const isSelected = selectedDevice === device.id;
-        
+
         return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
       };
 
@@ -123,24 +145,28 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
             ${device.position ? `
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Velocidade:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.speed} km/h</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${formattedSpeed}</span>
               </div>
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Ignição:</span>
-                <span style="color: ${device.position.ignition ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.ignition ? 'Ligada' : 'Desligada'}</span>
+                <span style="color: ${ignitionOn ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${ignitionOn ? 'Ligada' : 'Desligada'}</span>
               </div>
               <div style="margin-bottom: 4px;">
                 <span style="color: #6B7280; font-size: 12px;">Odômetro:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.odometer.toLocaleString()} km</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedOdometer}</span>
               </div>
-              ${device.position.fuel ? `
+              ${formattedFuel ? `
                 <div style="margin-bottom: 4px;">
                   <span style="color: #6B7280; font-size: 12px;">Combustível:</span>
-                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.fuel}%</span>
+                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedFuel}</span>
                 </div>
               ` : ''}
+              <div style="margin-bottom: 4px;">
+                <span style="color: #6B7280; font-size: 12px;">Direção:</span>
+                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${formattedHeading}</span>
+              </div>
               <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5E7EB;">
-                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${new Date(device.lastUpdate).toLocaleString('pt-BR')}</span>
+                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${lastUpdate}</span>
               </div>
             ` : ''}
           </div>
@@ -163,6 +189,16 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
 
       markersRef.current.push(marker);
     });
+
+    if (hasVisibleDevice) {
+      if (markersRef.current.length === 1) {
+        mapInstance.setCenter(bounds.getCenter());
+        const currentZoom = mapInstance.getZoom() ?? 12;
+        mapInstance.setZoom(Math.max(currentZoom, 14));
+      } else {
+        mapInstance.fitBounds(bounds, { top: 48, right: 48, bottom: 48, left: 48 } as google.maps.Padding);
+      }
+    }
   };
 
   const handleZoomIn = () => {
@@ -219,7 +255,7 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
     if (map) {
       addDeviceMarkers(map);
     }
-  }, [map, devices, showOfflineDevices, selectedDevice]);
+  }, [map, devices, vehicles, showOfflineDevices, selectedDevice]);
 
   const getStatusColor = (device: Device) => {
     if (device.status === 'offline') return 'text-gray-400';
@@ -421,7 +457,8 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
               {(showOfflineDevices ? devices : onlineDevices).map((device) => {
                 const StatusIcon = getStatusIcon(device);
                 const isSelected = selectedDevice === device.id;
-                
+                const speed = typeof device.position?.speed === 'number' ? device.position.speed : undefined;
+
                 return (
                   <button
                     key={device.id}
@@ -445,9 +482,9 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
                         <div className="text-xs text-gray-600 truncate">
                           {getStatusLabel(device)}
                         </div>
-                        {device.position && (
+                        {typeof speed === 'number' && (
                           <div className="text-xs text-gray-500">
-                            {device.position.speed} km/h
+                            {speed} km/h
                           </div>
                         )}
                       </div>
@@ -462,6 +499,23 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
           {selectedDevice && (() => {
             const device = devices.find(d => d.id === selectedDevice);
             if (!device) return null;
+
+            const odometerValue = device.position?.odometer;
+            const formattedOdometer =
+              typeof odometerValue === 'number' ? `${odometerValue.toLocaleString()} km` : 'N/A';
+            const fuelValue = device.position?.fuel;
+            const formattedFuel = typeof fuelValue === 'number' ? `${fuelValue}%` : 'N/A';
+            const formattedHeading =
+              typeof device.position?.heading === 'number'
+                ? `${device.position.heading.toFixed(0)}°`
+                : 'N/A';
+            const formattedSpeed =
+              typeof device.position?.speed === 'number' ? `${device.position.speed} km/h` : 'N/A';
+            const formattedSatellites =
+              typeof device.position?.satellites === 'number' ? device.position.satellites : 'N/A';
+            const lastUpdate = device.lastUpdate
+              ? new Date(device.lastUpdate).toLocaleString('pt-BR')
+              : 'N/A';
 
             return (
               <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -485,11 +539,11 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
                     <>
                       <div>
                         <p className="text-xs text-gray-600">Velocidade</p>
-                        <p className="text-sm font-medium text-gray-900">{device.position.speed} km/h</p>
+                        <p className="text-sm font-medium text-gray-900">{formattedSpeed}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-600">Direção</p>
-                        <p className="text-sm font-medium text-gray-900">{device.position.heading}°</p>
+                        <p className="text-sm font-medium text-gray-900">{formattedHeading}</p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-600">Coordenadas</p>
@@ -499,33 +553,31 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
                       </div>
                       <div>
                         <p className="text-xs text-gray-600">Odômetro</p>
-                        <p className="text-sm font-medium text-gray-900">{device.position.odometer.toLocaleString()} km</p>
+                        <p className="text-sm font-medium text-gray-900">{formattedOdometer}</p>
                       </div>
-                      {device.position.fuel && (
+                      {typeof device.position.fuel === 'number' && (
                         <div>
                           <p className="text-xs text-gray-600">Combustível</p>
                           <div className="flex items-center gap-2">
                             <div className="flex-1 bg-gray-200 rounded-full h-2">
-                              <div 
-                                className="bg-blue-500 h-2 rounded-full" 
-                                style={{ width: `${device.position.fuel}%` }}
+                              <div
+                                className="bg-blue-500 h-2 rounded-full"
+                                style={{ width: `${Math.max(0, Math.min(device.position.fuel, 100))}%` }}
                               />
                             </div>
-                            <span className="text-sm font-medium text-gray-900">{device.position.fuel}%</span>
+                            <span className="text-sm font-medium text-gray-900">{formattedFuel}</span>
                           </div>
                         </div>
                       )}
                       <div>
                         <p className="text-xs text-gray-600">Satélites</p>
-                        <p className="text-sm font-medium text-gray-900">{device.position.satellites || 'N/A'}</p>
+                        <p className="text-sm font-medium text-gray-900">{formattedSatellites}</p>
                       </div>
                     </>
                   )}
                   <div>
                     <p className="text-xs text-gray-600">Última atualização</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {new Date(device.lastUpdate).toLocaleString('pt-BR')}
-                    </p>
+                    <p className="text-sm font-medium text-gray-900">{lastUpdate}</p>
                   </div>
                 </div>
               </div>
