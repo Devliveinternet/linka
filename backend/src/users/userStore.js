@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { hashPassword } from "./crypto.js";
+import { hashPassword, verifyPassword } from "./crypto.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,26 +32,85 @@ const DEFAULT_CHILD_RESTRICTIONS = {
 
 let cache = null;
 
+function getDefaultAdminEmail() {
+  return (
+    process.env.ADMIN_DEFAULT_EMAIL ||
+    process.env.TRACCAR_USER ||
+    "admin@admin.com"
+  );
+}
+
+function getDefaultAdminPassword() {
+  return (
+    process.env.ADMIN_DEFAULT_PASSWORD ||
+    process.env.TRACCAR_PASS ||
+    "admin123"
+  );
+}
+
+function buildDefaultAdminUser() {
+  const { hash, salt } = hashPassword(getDefaultAdminPassword());
+  return {
+    id: "admin",
+    email: getDefaultAdminEmail(),
+    name: "Administrador",
+    role: Roles.ADMIN,
+    passwordHash: hash,
+    passwordSalt: salt,
+    restrictions: {
+      masterPolicies: {
+        ...DEFAULT_MASTER_POLICIES,
+      },
+    },
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function ensureDefaultAdmin(users) {
+  const defaultEmail = getDefaultAdminEmail();
+  const defaultPassword = getDefaultAdminPassword();
+
+  const adminUser = users.find((user) => user.id === "admin");
+  if (!adminUser) {
+    users.push(buildDefaultAdminUser());
+    return true;
+  }
+
+  let updated = false;
+
+  if (adminUser.email !== defaultEmail) {
+    adminUser.email = defaultEmail;
+    updated = true;
+  }
+
+  if (!verifyPassword(defaultPassword, adminUser.passwordHash, adminUser.passwordSalt)) {
+    const { hash, salt } = hashPassword(defaultPassword);
+    adminUser.passwordHash = hash;
+    adminUser.passwordSalt = salt;
+    updated = true;
+  }
+
+  return updated;
+}
+
 function ensureDataFile() {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
   if (!fs.existsSync(dataFile)) {
-    const { hash, salt } = hashPassword(
-      process.env.ADMIN_DEFAULT_PASSWORD || "admin123"
-    );
-    const adminUser = {
-      id: "admin",
-      email: process.env.ADMIN_DEFAULT_EMAIL || "admin@linka.local",
-      name: "Administrador",
-      role: Roles.ADMIN,
-      passwordHash: hash,
-      passwordSalt: salt,
-      restrictions: {
-        masterPolicies: {
-          ...DEFAULT_MASTER_POLICIES,
-        },
-      },
-      createdAt: new Date().toISOString(),
-    };
+    const adminUser = buildDefaultAdminUser();
+    fs.writeFileSync(dataFile, JSON.stringify([adminUser], null, 2));
+    return;
+  }
+
+  try {
+    const raw = fs.readFileSync(dataFile, "utf-8");
+    const users = JSON.parse(raw);
+    if (Array.isArray(users) && ensureDefaultAdmin(users)) {
+      fs.writeFileSync(dataFile, JSON.stringify(users, null, 2));
+    }
+  } catch (error) {
+    console.error("Erro ao carregar usuários, recriando arquivo padrão.", error);
+    const adminUser = buildDefaultAdminUser();
     fs.writeFileSync(dataFile, JSON.stringify([adminUser], null, 2));
   }
 }
