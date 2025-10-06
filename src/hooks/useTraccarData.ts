@@ -1,6 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Alert, Trip, Geofence, Driver, Vehicle } from '../types';
-import { traccarService, type DeviceSummary } from '../services/traccarService';
+import { useAuth } from '../context/AuthContext';
+
+type DeviceSummary = {
+  id: number;
+  name: string;
+  uniqueId: string;
+  status: 'online' | 'offline' | 'unknown' | string;
+  model?: string;
+  category?: string;
+  lastUpdate?: string;
+  minutesAgo?: number;
+  lastFixTime?: string;
+  speedKmh?: number;
+  address?: string;
+};
 
 interface TraccarData {
   devices: DeviceSummary[];  // <- agora usa o resumo enriquecido
@@ -14,6 +28,7 @@ interface TraccarData {
 }
 
 export const useTraccarData = (refreshInterval: number = 30000) => {
+  const { apiFetch } = useAuth();
   const [data, setData] = useState<TraccarData>({
     devices: [],
     alerts: [],
@@ -31,9 +46,9 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
 
       // Devices (enriquecidos), Alerts e Geofences em paralelo
       const [devices, alerts, geofences] = await Promise.all([
-        traccarService.getDevicesEnriched(),
-        traccarService.getAlerts(),
-        traccarService.getGeofences(),
+        apiFetch<DeviceSummary[]>('/traccar/devices/enriched'),
+        apiFetch<Alert[]>('/traccar/events'),
+        apiFetch<Geofence[]>('/traccar/geofences'),
       ]);
 
       // Drivers e Vehicles derivados dos devices (placeholders para os campos que não existem no Traccar)
@@ -84,7 +99,7 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
         error: error instanceof Error ? error.message : 'Erro desconhecido',
       }));
     }
-  }, []);
+  }, [apiFetch]);
 
   useEffect(() => {
     fetchData();
