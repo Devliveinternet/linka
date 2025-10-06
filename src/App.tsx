@@ -193,7 +193,7 @@ const RequireAuth: React.FC<{ children: React.ReactElement }> = ({ children }) =
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    return <Navigate to="/" replace state={{ from: location }} />;
   }
 
   return children;
@@ -208,11 +208,17 @@ const LoginRoute: React.FC = () => {
   const fromLocation = (location.state as LoginLocationState | undefined)?.from;
   const redirectPath = useMemo(() => {
     if (!fromLocation?.pathname) {
-      return '/';
+      return '/app/dashboard';
     }
     const search = fromLocation.search ?? '';
     const hash = fromLocation.hash ?? '';
     const path = fromLocation.pathname || '/';
+    if (path === '/' || path === '/login') {
+      return '/app/dashboard';
+    }
+    if (path === '/app' || path === '/app/') {
+      return '/app/dashboard';
+    }
     return `${path}${search}${hash}`;
   }, [fromLocation]);
 
@@ -224,12 +230,18 @@ const LoginRoute: React.FC = () => {
     [login, navigate, redirectPath]
   );
 
+  useEffect(() => {
+    if (!isBootstrapping && user) {
+      navigate(redirectPath, { replace: true });
+    }
+  }, [isBootstrapping, navigate, redirectPath, user]);
+
   if (isBootstrapping) {
     return <LoadingScreen message="Carregando sessão..." />;
   }
 
   if (user) {
-    return <Navigate to={redirectPath} replace />;
+    return <LoadingScreen message="Redirecionando..." />;
   }
 
   return <LoginPage onLogin={handleLogin} isSubmitting={isSubmitting} serverError={error} />;
@@ -247,9 +259,10 @@ const ProtectedAppRoute: React.FC = () => {
 function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginRoute />} />
+      <Route path="/" element={<LoginRoute />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
       <Route
-        path="/*"
+        path="/app/*"
         element={(
           <RequireAuth>
             <ProtectedAppRoute />
