@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MapPin, Circle, Square, Navigation, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { MapPin, Circle, Square, Navigation } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
-import { createVehicleIcon, getVehicleTypeFromDevice, getVehiclePhotoFromDevice } from '../../utils/vehicleIcons';
+import { GoogleMapsIntegration } from '../Map/GoogleMapsIntegration';
 
 interface FleetMapProps {
   devices: Device[];
@@ -10,14 +10,21 @@ interface FleetMapProps {
   onDeviceSelect: (deviceId: string) => void;
 }
 
-export const FleetMap: React.FC<FleetMapProps> = ({ 
-  devices, 
+const getStatusColor = (device: Device) => {
+  if (device.status === 'offline') return 'text-gray-400';
+  if (device.position?.ignition && device.position?.speed && device.position.speed > 5) {
+    return 'text-green-500';
+  }
+  if (device.position?.ignition) return 'text-yellow-500';
+  return 'text-blue-500';
+};
+
+export const FleetMap: React.FC<FleetMapProps> = ({
+  devices,
   vehicles = [],
-  selectedDevice, 
-  onDeviceSelect 
+  selectedDevice,
+  onDeviceSelect
 }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
   const markersRef = useRef<google.maps.Marker[]>([]);
   const lastBoundsRef = useRef<google.maps.LatLngBounds | null>(null);
@@ -267,54 +274,16 @@ export const FleetMap: React.FC<FleetMapProps> = ({
           <h3 className="text-base sm:text-lg font-semibold text-gray-900">Mapa da Frota</h3>
           <p className="text-xs sm:text-sm text-gray-600">Visualização em tempo real</p>
         </div>
-        
-        <div className="relative h-64 sm:h-80 lg:h-96">
-          <div ref={mapRef} className="w-full h-full" />
-          
-          {/* Map Controls */}
-          <div className="absolute top-4 right-4 space-y-2">
-            <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
-              <button
-                onClick={handleZoomIn}
-                className="block w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
-                title="Zoom In"
-              >
-                <ZoomIn size={14} />
-              </button>
-              <button
-                onClick={handleZoomOut}
-                className="block w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                title="Zoom Out"
-              >
-                <ZoomOut size={14} />
-              </button>
-            </div>
-            <button
-              onClick={handleResetView}
-              className="bg-white rounded-lg shadow-lg border border-gray-200 w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors"
-              title="Reset View"
-            >
-              <RotateCcw size={14} />
-            </button>
-          </div>
-        </div>
-        
-        <div className="p-3 sm:p-4 bg-gray-50 border-t border-gray-200">
-          <div className="flex items-center gap-3 sm:gap-6 text-xs sm:text-sm overflow-x-auto">
-            <div className="flex items-center gap-2">
-              <Navigation size={14} className="text-green-500 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Em movimento</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Square size={14} className="text-yellow-500 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Parado (ligado)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Circle size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Offline</span>
-            </div>
-          </div>
-        </div>
+
+        <GoogleMapsIntegration
+          apiKey={googleMapsApiKey}
+          devices={devices}
+          vehicles={vehicles}
+          selectedDevice={selectedDevice}
+          onDeviceSelect={onDeviceSelect}
+          variant="dashboard"
+          className="flex flex-col"
+        />
       </div>
     );
   }
@@ -340,9 +309,9 @@ export const FleetMap: React.FC<FleetMapProps> = ({
         {/* Device markers overlay for placeholder */}
         <div className="absolute inset-2 sm:inset-4">
           {devices.map((device, index) => {
-            const StatusIcon = getStatusIcon(device);
+            const StatusIcon = device.status === 'offline' ? Circle : device.position?.ignition ? Navigation : Square;
             const isSelected = selectedDevice === device.id;
-            
+
             return (
               <button
                 key={device.id}
