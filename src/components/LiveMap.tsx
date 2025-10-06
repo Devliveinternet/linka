@@ -1,7 +1,8 @@
 import { Loader } from '@googlemaps/js-api-loader';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { useAuth } from '../context/AuthContext';
 
 type Position = {
   id?: number;
@@ -132,14 +133,15 @@ export default function LiveMap() {
   }
 
   // -------- rota (backend) --------
-  async function fetchRoute(deviceId: number, hours = 2) {
-    const url = new URL('/traccar/route', window.location.origin);
-    url.searchParams.set('deviceId', String(deviceId));
-    url.searchParams.set('hours', String(hours));
-    const r = await fetch(url.toString());
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return (await r.json()) as Position[]; // posições em ordem cronológica
-  }
+  const { apiFetch, token } = useAuth();
+
+  const fetchRoute = useCallback(async (deviceId: number, hours = 2) => {
+    const search = new URLSearchParams({
+      deviceId: String(deviceId),
+      hours: String(hours),
+    });
+    return apiFetch<Position[]>(`/traccar/route?${search.toString()}`);
+  }, [apiFetch]);
 
   function drawRoute(deviceId: number, positions: Position[]) {
     if (!mapRef.current || !positions.length) return;
@@ -211,26 +213,23 @@ export default function LiveMap() {
 
   // snapshot inicial: nomes + últimas posições + geofences
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !token) return;
 
-    fetch('/traccar/devices/map')
-      .then((r) => r.json())
+    apiFetch<Record<number, string>>('/traccar/devices/map')
       .then((m) => setNameMap(m || {}))
       .catch(() => {});
 
-    fetch('/traccar/positions/latest')
-      .then((r) => r.json())
-      .then((positions: Position[]) => {
+    apiFetch<Position[]>('/traccar/positions/latest')
+      .then((positions) => {
         applyBatch(positions);
         fitToMarkers();
       })
       .catch(() => {});
 
-    fetch('/traccar/geofences')
-      .then((r) => r.json())
-      .then((gfs: Geofence[]) => setGeofences(Array.isArray(gfs) ? gfs : []))
+    apiFetch<Geofence[]>('/traccar/geofences')
+      .then((gfs) => setGeofences(Array.isArray(gfs) ? gfs : []))
       .catch(() => {});
-  }, [ready]);
+  }, [apiFetch, ready, token]);
 
   // desenhar/limpar geofences quando mudar toggle ou lista (com cores)
   useEffect(() => {

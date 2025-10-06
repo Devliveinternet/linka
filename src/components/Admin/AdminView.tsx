@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { 
-  Building, 
-  Truck, 
-  Smartphone, 
-  Users, 
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Building,
+  Truck,
+  Smartphone,
+  Users,
   Shield, 
   BarChart3,
   Settings as SettingsIcon
@@ -16,23 +16,55 @@ import { RolesManagement } from './RolesManagement';
 import { AdminReports } from './AdminReports';
 import { EquipmentRegistration } from '../Equipment/EquipmentRegistration';
 import { AdminSettings } from './AdminSettings';
+import { UserHierarchyManager } from './UserHierarchyManager';
+import { AuthUser } from '../../context/AuthContext';
 
-export const AdminView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('clients');
+interface AdminViewProps {
+  currentUser: AuthUser;
+}
 
-  const tabs = [
-    { id: 'clients', label: 'Clientes', icon: Building },
-    { id: 'equipment', label: 'Equipamentos', icon: Smartphone },
-    { id: 'vehicles', label: 'Veículos', icon: Truck },
-    { id: 'devices', label: 'Dispositivos', icon: Smartphone },
-    { id: 'drivers', label: 'Motoristas', icon: Users },
-    { id: 'roles', label: 'Perfis & Permissões', icon: Shield },
-    { id: 'reports', label: 'Relatórios', icon: BarChart3 },
-    { id: 'settings', label: 'Configurações', icon: SettingsIcon },
-  ];
+export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
+  const isAdmin = currentUser.role === 'admin';
+  const isMaster = currentUser.role === 'master';
+
+  const tabs = useMemo(() => {
+    const base = [{ id: 'users', label: 'Usuários', icon: Users }];
+    if (isAdmin) {
+      return [
+        ...base,
+        { id: 'clients', label: 'Clientes', icon: Building },
+        { id: 'equipment', label: 'Equipamentos', icon: Smartphone },
+        { id: 'vehicles', label: 'Veículos', icon: Truck },
+        { id: 'devices', label: 'Dispositivos', icon: Smartphone },
+        { id: 'drivers', label: 'Motoristas', icon: Users },
+        { id: 'roles', label: 'Perfis & Permissões', icon: Shield },
+        { id: 'reports', label: 'Relatórios', icon: BarChart3 },
+        { id: 'settings', label: 'Configurações', icon: SettingsIcon },
+      ];
+    }
+    if (isMaster) {
+      return [
+        ...base,
+        { id: 'drivers', label: 'Motoristas', icon: Users },
+        { id: 'reports', label: 'Relatórios', icon: BarChart3 },
+        { id: 'settings', label: 'Configurações', icon: SettingsIcon },
+      ];
+    }
+    return base;
+  }, [isAdmin, isMaster]);
+
+  const [activeTab, setActiveTab] = useState(tabs[0]?.id ?? 'users');
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(tabs[0]?.id ?? 'users');
+    }
+  }, [tabs, activeTab]);
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'users':
+        return <UserHierarchyManager currentUser={currentUser} isAdmin={isAdmin} />;
       case 'clients':
         return <ClientsManagement />;
       case 'equipment':

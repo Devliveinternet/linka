@@ -1,12 +1,24 @@
-﻿import axios from "axios";
+import axios from "axios";
 // import https from "https"; // se usar HTTPS self-signed, descomente o Agent abaixo
+
+import { parseTraccarBaseUrl } from "../utils/traccarUrls.js";
 
 const baseURL = process.env.TRACCAR_BASE_URL;
 const token   = process.env.TRACCAR_TOKEN;
 
+const { httpBaseURL, error: baseUrlError } = parseTraccarBaseUrl(baseURL);
+const axiosBaseURL = httpBaseURL ?? baseURL;
+
+if (!axiosBaseURL && baseUrlError) {
+  console.warn(`TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api. (${baseUrlError})`);
+}
+
+const headers = {};
+if (token) headers.Authorization = `Bearer ${token}`;
+
 export const traccar = axios.create({
-  baseURL,
-  headers: { Authorization: 'Bearer ' + token },
+  baseURL: axiosBaseURL,
+  headers,
   timeout: 10000,
   // httpsAgent: new https.Agent({ rejectUnauthorized: false }),
 });
