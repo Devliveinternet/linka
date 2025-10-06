@@ -3,10 +3,15 @@ import WebSocket from "ws";
 import https from "https";
 // import https from "https"; // se seu Traccar for HTTPS self-signed, veja o comentário mais abaixo
 
-const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082
+const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082 OU http://localhost:8082/api
 const user    = process.env.TRACCAR_USER;     // admin (ou outro)
 const pass    = process.env.TRACCAR_PASS;     // senha
+const token   = process.env.TRACCAR_TOKEN;    // alternativa usando token
 const allowSelfSigned = String(process.env.ALLOW_SELF_SIGNED || '') === 'true';
+
+const trimmedBaseURL = baseURL?.replace(/\/+$/, '');
+const httpBaseURL = trimmedBaseURL?.endsWith('/api') ? trimmedBaseURL.slice(0, -4) : trimmedBaseURL;
+const apiBaseURL = httpBaseURL ? `${httpBaseURL}/api` : undefined;
 
 // --- Registro dos clientes SSE do navegador
 const sseClients = new Set();
@@ -20,7 +25,6 @@ function broadcast(type, payload) {
 }
 
 function buildWsUrl(base) {
-  // remove barras finais
   const trimmed = base.replace(/\/+$/, '');
   const proto = trimmed.startsWith('https') ? 'wss' : 'ws';
   const host  = trimmed.replace(/^https?:\/\//, '');
@@ -39,60 +43,78 @@ let reconnectTimer;
 let backoff = 1000;
 
 async function createSession() {
-  const url = `${baseURL.replace(/\/+$/, '')}/api/session`;
+  const url = `${apiBaseURL}/session`;
   const httpsCfg = allowSelfSigned ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {};
 
-  // 1) JSON
-  try {
-    const resp = await axios.post(
-      url,
-      { email: user, password: pass },
-      { headers: { "Content-Type": "application/json", Accept: "application/json" }, withCredentials: true, ...httpsCfg }
-    );
-    const cookie = resp.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
-    if (!cookie) throw new Error("Sessão sem JSESSIONID (JSON)");
-    return cookie.split(";")[0];
-  } catch (e) {
-    logAxiosError('session-json', e);
-    const status = e.response?.status;
-    if (status !== 400 && status !== 415) throw e;
+  if (user && pass) {
+    // 1) JSON
+    try {
+      const resp = await axios.post(
+        url,
+        { email: user, password: pass },
+        { headers: { "Content-Type": "application/json", Accept: "application/json" }, withCredentials: true, ...httpsCfg }
+      );
+      const cookie = resp.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
+      if (!cookie) throw new Error("Sessão sem JSESSIONID (JSON)");
+      return cookie.split(";")[0];
+    } catch (e) {
+      logAxiosError('session-json', e);
+      const status = e.response?.status;
+      if (status !== 400 && status !== 415) throw e;
+    }
+
+    // 2) x-www-form-urlencoded
+    try {
+      const form = new URLSearchParams({ email: user, password: pass });
+      const resp2 = await axios.post(url, form.toString(), {
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        withCredentials: true,
+        ...httpsCfg,
+      });
+      const cookie2 = resp2.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
+      if (!cookie2) throw new Error("Sessão sem JSESSIONID (form)");
+      return cookie2.split(";")[0];
+    } catch (e) {
+      logAxiosError('session-form', e);
+    }
+
+    // 3) Basic Auth
+    try {
+      const basic = Buffer.from(`${user}:${pass}`).toString("base64");
+      const resp3 = await axios.get(url, {
+        headers: { Authorization: `Basic ${basic}` },
+        withCredentials: true,
+        ...httpsCfg,
+      });
+      const cookie3 = resp3.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
+      if (!cookie3) throw new Error("Sessão sem JSESSIONID (basic)");
+      return cookie3.split(";")[0];
+    } catch (e) {
+      logAxiosError('session-basic', e);
+    }
   }
 
-  // 2) x-www-form-urlencoded
-  try {
-    const form = new URLSearchParams({ email: user, password: pass });
-    const resp2 = await axios.post(url, form.toString(), {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      withCredentials: true,
-      ...httpsCfg,
-    });
-    const cookie2 = resp2.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
-    if (!cookie2) throw new Error("Sessão sem JSESSIONID (form)");
-    return cookie2.split(";")[0];
-  } catch (e) {
-    logAxiosError('session-form', e);
+  if (token) {
+    try {
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        withCredentials: true,
+        ...httpsCfg,
+      });
+      const cookie = resp.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
+      if (!cookie) throw new Error("Sessão sem JSESSIONID (token)");
+      return cookie.split(";")[0];
+    } catch (e) {
+      logAxiosError('session-token', e);
+    }
   }
 
-  // 3) Basic Auth
-  try {
-    const basic = Buffer.from(`${user}:${pass}`).toString("base64");
-    const resp3 = await axios.get(url, {
-      headers: { Authorization: `Basic ${basic}` },
-      withCredentials: true,
-      ...httpsCfg,
-    });
-    const cookie3 = resp3.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
-    if (!cookie3) throw new Error("Sessão sem JSESSIONID (basic)");
-    return cookie3.split(";")[0];
-  } catch (e) {
-    logAxiosError('session-basic', e);
-    throw e;
-  }
+  throw new Error("Não foi possível obter cookie de sessão do Traccar");
 }
 
 
 function openWs(cookie) {
-  const wsUrl = buildWsUrl(baseURL);
+  const wsUrl = buildWsUrl(httpBaseURL);
   const wsOpts = { headers: { Cookie: cookie } };
   if (allowSelfSigned) wsOpts.rejectUnauthorized = false;
 
@@ -139,9 +161,20 @@ function scheduleReconnect() {
 }
 
 export function startRealtimeBridge() {
-  if (!user || !pass) {
-    console.warn("TRACCAR_USER/TRACCAR_PASS não definidos; WS não será iniciado (REST continua funcionando).");
+  if (!baseURL) {
+    console.warn("TRACCAR_BASE_URL não definido; WS não será iniciado.");
     return;
   }
+
+  if (!httpBaseURL || !apiBaseURL) {
+    console.warn("TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api.");
+    return;
+  }
+
+  if (!((user && pass) || token)) {
+    console.warn("Credenciais do Traccar ausentes; defina TRACCAR_USER/TRACCAR_PASS ou TRACCAR_TOKEN para habilitar o WS.");
+    return;
+  }
+
   connect();
 }
