@@ -43,27 +43,29 @@ async function createSession() {
   const httpsCfg = allowSelfSigned ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {};
 
   if (user && pass) {
-    // 1) JSON
+    // 1) Basic Auth
     try {
-      const resp = await axios.post(
-        url,
-        { email: user, password: pass },
-        { headers: { "Content-Type": "application/json", Accept: "application/json" }, withCredentials: true, ...httpsCfg }
-      );
+      const basic = Buffer.from(`${user}:${pass}`).toString("base64");
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Basic ${basic}`, Accept: "application/json" },
+        withCredentials: true,
+        ...httpsCfg,
+      });
       const cookie = resp.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
-      if (!cookie) throw new Error("Sessão sem JSESSIONID (JSON)");
+      if (!cookie) throw new Error("Sessão sem JSESSIONID (basic)");
       return cookie.split(";")[0];
     } catch (e) {
-      logAxiosError('session-json', e);
       const status = e.response?.status;
-      if (status !== 400 && status !== 415) throw e;
+      if (status !== 401 && status !== 403 && status !== 404) {
+        logAxiosError('session-basic', e);
+      }
     }
 
     // 2) x-www-form-urlencoded
     try {
       const form = new URLSearchParams({ email: user, password: pass });
       const resp2 = await axios.post(url, form.toString(), {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         withCredentials: true,
         ...httpsCfg,
       });
@@ -71,22 +73,28 @@ async function createSession() {
       if (!cookie2) throw new Error("Sessão sem JSESSIONID (form)");
       return cookie2.split(";")[0];
     } catch (e) {
-      logAxiosError('session-form', e);
+      const status = e.response?.status;
+      if (status !== 400 && status !== 415) {
+        logAxiosError('session-form', e);
+      }
     }
 
-    // 3) Basic Auth
+    // 3) JSON
     try {
-      const basic = Buffer.from(`${user}:${pass}`).toString("base64");
-      const resp3 = await axios.get(url, {
-        headers: { Authorization: `Basic ${basic}` },
-        withCredentials: true,
-        ...httpsCfg,
-      });
+      const resp3 = await axios.post(
+        url,
+        { email: user, password: pass },
+        { headers: { "Content-Type": "application/json", Accept: "application/json" }, withCredentials: true, ...httpsCfg }
+      );
       const cookie3 = resp3.headers["set-cookie"]?.find(c => c.startsWith("JSESSIONID="));
-      if (!cookie3) throw new Error("Sessão sem JSESSIONID (basic)");
+      if (!cookie3) throw new Error("Sessão sem JSESSIONID (JSON)");
       return cookie3.split(";")[0];
     } catch (e) {
-      logAxiosError('session-basic', e);
+      const status = e.response?.status;
+      if (status !== 400 && status !== 415) {
+        logAxiosError('session-json', e);
+        throw e;
+      }
     }
   }
 

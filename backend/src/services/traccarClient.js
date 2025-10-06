@@ -16,7 +16,7 @@ if (!axiosBaseURL && baseUrlError) {
   console.warn(`TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api. (${baseUrlError})`);
 }
 
-const headers = {};
+const headers = { Accept: "application/json" };
 if (token) {
   headers.Authorization = `Bearer ${token}`;
 } else if (user && pass) {
