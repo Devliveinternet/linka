@@ -3,11 +3,15 @@ import WebSocket from "ws";
 import https from "https";
 // import https from "https"; // se seu Traccar for HTTPS self-signed, veja o comentário mais abaixo
 
-const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082
+const baseURL = process.env.TRACCAR_BASE_URL; // ex.: http://localhost:8082 OU http://localhost:8082/api
 const user    = process.env.TRACCAR_USER;     // admin (ou outro)
 const pass    = process.env.TRACCAR_PASS;     // senha
 const token   = process.env.TRACCAR_TOKEN;    // alternativa usando token
 const allowSelfSigned = String(process.env.ALLOW_SELF_SIGNED || '') === 'true';
+
+const trimmedBaseURL = baseURL?.replace(/\/+$/, '');
+const httpBaseURL = trimmedBaseURL?.endsWith('/api') ? trimmedBaseURL.slice(0, -4) : trimmedBaseURL;
+const apiBaseURL = httpBaseURL ? `${httpBaseURL}/api` : undefined;
 
 // --- Registro dos clientes SSE do navegador
 const sseClients = new Set();
@@ -21,7 +25,6 @@ function broadcast(type, payload) {
 }
 
 function buildWsUrl(base) {
-  // remove barras finais
   const trimmed = base.replace(/\/+$/, '');
   const proto = trimmed.startsWith('https') ? 'wss' : 'ws';
   const host  = trimmed.replace(/^https?:\/\//, '');
@@ -40,7 +43,7 @@ let reconnectTimer;
 let backoff = 1000;
 
 async function createSession() {
-  const url = `${baseURL.replace(/\/+$/, '')}/api/session`;
+  const url = `${apiBaseURL}/session`;
   const httpsCfg = allowSelfSigned ? { httpsAgent: new https.Agent({ rejectUnauthorized: false }) } : {};
 
   if (user && pass) {
@@ -111,7 +114,7 @@ async function createSession() {
 
 
 function openWs(cookie) {
-  const wsUrl = buildWsUrl(baseURL);
+  const wsUrl = buildWsUrl(httpBaseURL);
   const wsOpts = { headers: { Cookie: cookie } };
   if (allowSelfSigned) wsOpts.rejectUnauthorized = false;
 
@@ -160,6 +163,11 @@ function scheduleReconnect() {
 export function startRealtimeBridge() {
   if (!baseURL) {
     console.warn("TRACCAR_BASE_URL não definido; WS não será iniciado.");
+    return;
+  }
+
+  if (!httpBaseURL || !apiBaseURL) {
+    console.warn("TRACCAR_BASE_URL inválido; informe algo como http://host:8082 ou http://host:8082/api.");
     return;
   }
 
