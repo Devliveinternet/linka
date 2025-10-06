@@ -78,6 +78,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
       if (!skipAuth) {
         if (!token) {
+          clearSession();
           throw new Error('Sessão expirada. Faça login novamente.');
         }
         requestHeaders.set('Authorization', `Bearer ${token}`);
@@ -94,6 +95,9 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       });
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearSession();
+        }
         const payload = await parseJsonSafe(response);
         const message = payload?.error || response.statusText || 'Erro ao comunicar com o servidor';
         throw new Error(message);
@@ -102,7 +106,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       const payload = await parseJsonSafe(response);
       return payload as T;
     },
-    [token]
+    [clearSession, token]
   );
 
   const refreshProfile = useCallback(async () => {
