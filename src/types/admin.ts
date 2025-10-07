@@ -41,6 +41,8 @@ export interface AdminVehicle {
   status: 'active' | 'inactive' | 'maintenance';
   createdAt: string;
   photo?: string; // URL or base64 of vehicle photo
+  trackerId?: string; // IMEI/uniqueId vinculado no Traccar
+  rawAttributes?: Record<string, any>;
 }
 
 export interface AdminDevice {

@@ -1,43 +1,149 @@
-import React, { useState } from 'react';
-import { Plus, Search, Edit, Trash2, Eye, Truck, Link, Unlink, Wrench, X, Save, Upload, Image as ImageIcon } from 'lucide-react';
-import { AdminVehicle, Client, AdminDevice } from '../../types/admin';
-import { mockAdminVehicles, mockClients, mockAdminDevices } from '../../data/adminMockData';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Plus, Search, Edit, Trash2, Eye, Truck, X, Save, Upload, Image as ImageIcon } from 'lucide-react';
+import { AdminVehicle } from '../../types/admin';
+import { mockClients } from '../../data/adminMockData';
 import { handleImageUpload, validateImageUrl } from '../../utils/vehicleIcons';
+import { useAuth } from '../../context/AuthContext';
+
+type TraccarDevice = {
+  id: number | string;
+  name?: string;
+  uniqueId?: string;
+  status?: string;
+  category?: string;
+  createTime?: string;
+  createdAt?: string;
+  attributes?: Record<string, any>;
+};
+
+const toNumberOrUndefined = (value: unknown): number | undefined => {
+  if (value === null || value === undefined || value === '') return undefined;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+};
+
+const normalizeVehicleType = (value: unknown): AdminVehicle['vehicleType'] => {
+  if (typeof value !== 'string') return 'truck';
+  const normalized = value.toLowerCase();
+  if (['truck', 'caminhao', 'caminhão'].includes(normalized)) return 'truck';
+  if (['motorcycle', 'moto'].includes(normalized)) return 'motorcycle';
+  if (['machine', 'maquina', 'máquina'].includes(normalized)) return 'machine';
+  return 'car';
+};
+
+const normalizeStatus = (value: unknown): AdminVehicle['status'] => {
+  if (typeof value !== 'string') return 'inactive';
+  const normalized = value.toLowerCase();
+  if (normalized === 'maintenance' || normalized === 'manutencao' || normalized === 'manutenção') {
+    return 'maintenance';
+  }
+  if (['active', 'online'].includes(normalized)) {
+    return 'active';
+  }
+  return 'inactive';
+};
+
+const parseIntegerInput = (value: string): number | undefined => {
+  const trimmed = value.trim();
+  if (trimmed === '') return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const mapDeviceToVehicle = (device: TraccarDevice): AdminVehicle => {
+  const attributes = device?.attributes && typeof device.attributes === 'object' && !Array.isArray(device.attributes)
+    ? { ...device.attributes }
+    : {};
+
+  const initialOdometer = toNumberOrUndefined(attributes.initialOdometer) ?? 0;
+  const currentOdometer = toNumberOrUndefined(attributes.currentOdometer) ?? initialOdometer;
+  const year = toNumberOrUndefined(attributes.year) ?? new Date().getFullYear();
+  const vehicleType = normalizeVehicleType(attributes.vehicleType ?? device.category);
+  const status = normalizeStatus(attributes.status ?? device.status);
+  const trackerId = device.uniqueId != null ? String(device.uniqueId) : undefined;
+  const id = device.id != null ? String(device.id) : trackerId || `device_${Date.now()}`;
+
+  return {
+    id,
+    clientId: attributes.clientId || '',
+    plate: attributes.plate || device.name || trackerId || `Veículo ${id}`,
+    model: attributes.model || '',
+    brand: attributes.brand || '',
+    year,
+    color: attributes.color || '',
+    chassisNumber: attributes.chassisNumber || '',
+    vehicleType,
+    initialOdometer,
+    currentOdometer,
+    deviceId: id,
+    status,
+    createdAt: device.createTime || device.createdAt || new Date().toISOString(),
+    photo: attributes.photo,
+    trackerId,
+    rawAttributes: attributes,
+  };
+};
 
 export const VehiclesManagement: React.FC = () => {
-  const [vehicles, setVehicles] = useState<AdminVehicle[]>(mockAdminVehicles);
+  const { apiFetch } = useAuth();
+  const [vehicles, setVehicles] = useState<AdminVehicle[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterClient, setFilterClient] = useState<string>('all');
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<AdminVehicle | null>(null);
-  const [formData, setFormData] = useState<Partial<AdminVehicle>>({});
+  const [formData, setFormData] = useState<Partial<AdminVehicle>>({ vehicleType: 'truck', status: 'active' });
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const getClientName = (clientId: string) => {
     return mockClients.find(c => c.id === clientId)?.name || 'N/A';
   };
 
-  const getDeviceInfo = (deviceId?: string) => {
-    return deviceId ? mockAdminDevices.find(d => d.id === deviceId) : undefined;
-  };
+  const fetchVehicles = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const response = await apiFetch<TraccarDevice[]>('/traccar/devices');
+      const mapped = (response || []).map(mapDeviceToVehicle).sort((a, b) =>
+        a.plate.localeCompare(b.plate)
+      );
+      setVehicles(mapped);
+    } catch (error) {
+      console.error('Erro ao carregar veículos do Traccar:', error);
+      setFetchError(error instanceof Error ? error.message : 'Não foi possível carregar os veículos');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [apiFetch]);
 
-  const filteredVehicles = vehicles.filter(vehicle => {
-    const clientName = getClientName(vehicle.clientId);
-    
-    const matchesSearch = !searchTerm || 
-      vehicle.plate.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      vehicle.chassisNumber.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = filterStatus === 'all' || vehicle.status === filterStatus;
-    const matchesClient = filterClient === 'all' || vehicle.clientId === filterClient;
-    
-    return matchesSearch && matchesStatus && matchesClient;
-  });
+  useEffect(() => {
+    fetchVehicles();
+  }, [fetchVehicles]);
+
+  const filteredVehicles = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return vehicles.filter(vehicle => {
+      const clientName = getClientName(vehicle.clientId);
+
+      const matchesSearch = !term ||
+        vehicle.plate.toLowerCase().includes(term) ||
+        vehicle.model.toLowerCase().includes(term) ||
+        vehicle.brand.toLowerCase().includes(term) ||
+        clientName.toLowerCase().includes(term) ||
+        vehicle.chassisNumber.toLowerCase().includes(term) ||
+        (vehicle.trackerId ? vehicle.trackerId.toLowerCase().includes(term) : false);
+
+      const matchesStatus = filterStatus === 'all' || vehicle.status === filterStatus;
+      const matchesClient = filterClient === 'all' || vehicle.clientId === filterClient;
+
+      return matchesSearch && matchesStatus && matchesClient;
+    });
+  }, [vehicles, searchTerm, filterStatus, filterClient]);
 
   const getStatusBadge = (status: string) => {
     const badges = {
@@ -60,71 +166,122 @@ export const VehiclesManagement: React.FC = () => {
 
   const handleEdit = (vehicle: AdminVehicle) => {
     setEditingVehicle(vehicle);
-    setFormData(vehicle);
+    setFormData({
+      ...vehicle,
+      rawAttributes: vehicle.rawAttributes,
+    });
+    setModalError(null);
+    setPhotoError('');
     setShowEditModal(true);
   };
 
-  const handleDelete = (vehicleId: string) => {
-    if (confirm('Tem certeza que deseja excluir este veículo?')) {
-      setVehicles(prev => prev.filter(v => v.id !== vehicleId));
+  const handleDelete = async (vehicleId: string) => {
+    if (!confirm('Tem certeza que deseja excluir este veículo?')) {
+      return;
+    }
+    try {
+      await apiFetch(`/traccar/devices/${vehicleId}`, { method: 'DELETE' });
+      await fetchVehicles();
+    } catch (error) {
+      console.error('Erro ao excluir veículo:', error);
+      const message = error instanceof Error ? error.message : 'Não foi possível excluir o veículo';
+      setFetchError(message);
     }
   };
 
-  const handleLinkDevice = (vehicleId: string) => {
-    // Open device linking modal
-    console.log('Link device to vehicle:', vehicleId);
-  };
+  const handleSaveEdit = async () => {
+    if (!formData) return;
 
-  const handleUnlinkDevice = (vehicleId: string) => {
-    if (confirm('Tem certeza que deseja desvincular o dispositivo?')) {
-      setVehicles(prev => prev.map(v => 
-        v.id === vehicleId ? { ...v, deviceId: undefined } : v
-      ));
-    }
-  };
+    const plate = formData.plate?.trim();
+    const clientId = formData.clientId?.trim();
+    const trackerId = formData.trackerId?.trim();
 
-  const handleSaveEdit = () => {
-    if (editingVehicle && formData) {
-      setVehicles(prev => prev.map(v => 
-        v.id === editingVehicle.id ? { ...v, ...formData } as AdminVehicle : v
-      ));
-      setShowEditModal(false);
-      setEditingVehicle(null);
-      setFormData({});
+    if (!plate) {
+      setModalError('Informe a placa do veículo.');
+      return;
     }
-    if (!editingVehicle && formData) {
-      // Creating new vehicle
-      const newVehicle: AdminVehicle = {
-        id: `av_${Date.now()}`,
-        clientId: formData.clientId || '',
-        plate: formData.plate || '',
-        model: formData.model || '',
-        brand: formData.brand || '',
-        year: formData.year || new Date().getFullYear(),
-        color: formData.color || '',
-        chassisNumber: formData.chassisNumber || '',
-        vehicleType: formData.vehicleType || 'car',
-        initialOdometer: formData.initialOdometer || 0,
-        currentOdometer: formData.currentOdometer || formData.initialOdometer || 0,
-        deviceId: formData.deviceId,
-        status: formData.status || 'active',
-        createdAt: new Date().toISOString()
-      };
-      
-      setVehicles(prev => [...prev, newVehicle]);
-      setShowEditModal(false);
-      setEditingVehicle(null);
-      setFormData({});
+    if (!clientId) {
+      setModalError('Selecione um cliente para o veículo.');
+      return;
+    }
+    if (!trackerId) {
+      setModalError('Informe o IMEI/ID do rastreador vinculado ao veículo.');
+      return;
+    }
+
+    const vehicleType = formData.vehicleType || 'truck';
+    const status = formData.status || 'active';
+
+    const payload: Record<string, any> = {
+      name: plate,
+      uniqueId: trackerId,
+      trackerId,
+      plate,
+      clientId,
+      brand: formData.brand?.trim(),
+      model: formData.model?.trim(),
+      color: formData.color?.trim(),
+      year: formData.year,
+      chassisNumber: formData.chassisNumber?.trim(),
+      vehicleType,
+      initialOdometer: formData.initialOdometer,
+      currentOdometer: formData.currentOdometer,
+      photo: formData.photo,
+      status,
+      attributes: formData.rawAttributes,
+    };
+
+    const cleanedPayload = Object.entries(payload).reduce<Record<string, any>>((acc, [key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return acc;
+      }
+      if (typeof value === 'string') {
+        acc[key] = value.trim();
+        return acc;
+      }
+      if (typeof value === 'object' && key === 'attributes') {
+        acc[key] = { ...(value as Record<string, any>) };
+        return acc;
+      }
+      acc[key] = value;
+      return acc;
+    }, {});
+
+    setIsSaving(true);
+    setModalError(null);
+    try {
+      if (editingVehicle) {
+        await apiFetch(`/traccar/devices/${editingVehicle.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(cleanedPayload),
+        });
+      } else {
+        await apiFetch('/traccar/devices', {
+          method: 'POST',
+          body: JSON.stringify(cleanedPayload),
+        });
+      }
+      await fetchVehicles();
+      handleCloseModal();
+    } catch (error) {
+      console.error('Erro ao salvar veículo:', error);
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o veículo';
+      setModalError(message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleCloseModal = () => {
     setShowEditModal(false);
     setEditingVehicle(null);
-    setFormData({});
+    setFormData({ vehicleType: 'truck', status: 'active', year: new Date().getFullYear() });
+    setModalError(null);
+    setPhotoError('');
+    setIsSaving(false);
   };
 
-  const handleInputChange = (field: string, value: any) => {
+  const handleInputChange = <K extends keyof AdminVehicle>(field: K, value: AdminVehicle[K] | undefined) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -173,10 +330,12 @@ export const VehiclesManagement: React.FC = () => {
           <h2 className="text-2xl font-bold text-gray-900">Gestão de Veículos</h2>
           <p className="text-gray-600">Cadastro e gerenciamento da frota de clientes</p>
         </div>
-        <button 
+        <button
           onClick={() => {
             setEditingVehicle(null);
-            setFormData({});
+            setFormData({ vehicleType: 'truck', status: 'active', year: new Date().getFullYear() });
+            setModalError(null);
+            setPhotoError('');
             setShowEditModal(true);
           }}
           className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
@@ -193,7 +352,7 @@ export const VehiclesManagement: React.FC = () => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
             <input
               type="text"
-              placeholder="Buscar por placa, modelo, marca, cliente ou chassi..."
+              placeholder="Buscar por placa, modelo, marca, cliente, chassi ou rastreador..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full"
@@ -222,26 +381,32 @@ export const VehiclesManagement: React.FC = () => {
         </div>
       </div>
 
+      {fetchError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          {fetchError}
+        </div>
+      )}
+
       {/* Vehicles Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        {isLoading ? (
+          <div className="p-6 text-center text-gray-500">Carregando veículos...</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="text-left p-4 font-semibold text-gray-900">Veículo</th>
                 <th className="text-left p-4 font-semibold text-gray-900">Cliente</th>
                 <th className="text-left p-4 font-semibold text-gray-900">Tipo</th>
                 <th className="text-left p-4 font-semibold text-gray-900">Odômetro</th>
-                <th className="text-left p-4 font-semibold text-gray-900">Dispositivo</th>
+                <th className="text-left p-4 font-semibold text-gray-900">Rastreador</th>
                 <th className="text-left p-4 font-semibold text-gray-900">Status</th>
                 <th className="text-left p-4 font-semibold text-gray-900">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredVehicles.map((vehicle) => {
-                const device = getDeviceInfo(vehicle.deviceId);
-                
-                return (
+              {filteredVehicles.map((vehicle) => (
                   <tr key={vehicle.id} className="hover:bg-gray-50 transition-colors">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
@@ -283,23 +448,14 @@ export const VehiclesManagement: React.FC = () => {
                       </div>
                     </td>
                     <td className="p-4">
-                      {device ? (
-                        <div className="text-sm">
-                          <div className="font-medium text-gray-900">{device.model}</div>
-                          <div className="text-xs text-gray-600">IMEI: {device.imei}</div>
-                          <div className={`text-xs font-medium ${
-                            device.activationStatus === 'active' ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {device.activationStatus}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-gray-500">Não vinculado</span>
-                      )}
+                      <div className="text-sm">
+                        <div className="font-medium text-gray-900">{vehicle.trackerId || 'Não informado'}</div>
+                        <div className="text-xs text-gray-600">ID Traccar: {vehicle.deviceId}</div>
+                      </div>
                     </td>
                     <td className="p-4">
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusBadge(vehicle.status)}`}>
-                        {vehicle.status === 'active' ? 'Ativo' : 
+                        {vehicle.status === 'active' ? 'Ativo' :
                          vehicle.status === 'maintenance' ? 'Manutenção' : 'Inativo'}
                       </span>
                     </td>
@@ -319,23 +475,6 @@ export const VehiclesManagement: React.FC = () => {
                         >
                           <Eye size={16} />
                         </button>
-                        {vehicle.deviceId ? (
-                          <button
-                            onClick={() => handleUnlinkDevice(vehicle.id)}
-                            className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                            title="Desvincular Dispositivo"
-                          >
-                            <Unlink size={16} />
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleLinkDevice(vehicle.id)}
-                            className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                            title="Vincular Dispositivo"
-                          >
-                            <Link size={16} />
-                          </button>
-                        )}
                         <button
                           onClick={() => handleDelete(vehicle.id)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -346,14 +485,14 @@ export const VehiclesManagement: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                );
-              })}
+                ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+        )}
       </div>
 
-      {filteredVehicles.length === 0 && (
+      {!isLoading && filteredVehicles.length === 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
           <Truck className="w-16 h-16 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhum veículo encontrado</h3>
@@ -363,21 +502,38 @@ export const VehiclesManagement: React.FC = () => {
 
       {/* Edit Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {editingVehicle ? 'Editar Veículo' : 'Novo Veículo'}
-              </h3>
-              <button
-                onClick={handleCloseModal}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
-              >
-                <X size={20} />
-              </button>
+        <div className="fixed inset-0 z-50 flex">
+          <div
+            className="flex-1 bg-black/50"
+            role="presentation"
+            onClick={handleCloseModal}
+          />
+
+          <div className="relative w-full max-w-3xl h-full bg-white shadow-2xl flex flex-col">
+            <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
+              <div className="flex items-center justify-between px-6 py-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 mb-1">
+                    Cadastro de Veículo
+                  </p>
+                  <h3 className="text-2xl font-semibold text-gray-900">
+                    {editingVehicle ? 'Editar veículo' : 'Adicionar novo veículo'}
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    Preencha os dados abaixo para criar um device vinculado no Traccar.
+                  </p>
+                </div>
+                <button
+                  onClick={handleCloseModal}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                  aria-label="Fechar mini página"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
-            
-            <div className="p-6 space-y-6">
+
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -385,19 +541,19 @@ export const VehiclesManagement: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={formData.plate || ''}
+                    value={formData.plate ?? ''}
                     onChange={(e) => handleInputChange('plate', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="ABC1234"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cliente *
                   </label>
                   <select
-                    value={formData.clientId || ''}
+                    value={formData.clientId ?? ''}
                     onChange={(e) => handleInputChange('clientId', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
@@ -407,14 +563,30 @@ export const VehiclesManagement: React.FC = () => {
                     ))}
                   </select>
                 </div>
-                
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    IMEI / ID do Rastreador *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.trackerId ?? ''}
+                    onChange={(e) => handleInputChange('trackerId', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="860123456789012"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Este identificador será utilizado como uniqueId no Traccar.
+                  </p>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Marca *
                   </label>
                   <input
                     type="text"
-                    value={formData.brand || ''}
+                    value={formData.brand ?? ''}
                     onChange={(e) => handleInputChange('brand', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Scania"
@@ -427,48 +599,48 @@ export const VehiclesManagement: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={formData.model || ''}
+                    value={formData.model ?? ''}
                     onChange={(e) => handleInputChange('model', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="R450"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Ano *
                   </label>
                   <input
                     type="number"
-                    value={formData.year || ''}
-                    onChange={(e) => handleInputChange('year', parseInt(e.target.value))}
+                    value={formData.year ?? ''}
+                    onChange={(e) => handleInputChange('year', parseIntegerInput(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="2023"
                     min="1990"
-                    max="2025"
+                    max={new Date().getFullYear() + 1}
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cor
                   </label>
                   <input
                     type="text"
-                    value={formData.color || ''}
+                    value={formData.color ?? ''}
                     onChange={(e) => handleInputChange('color', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Branco"
                   />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Tipo de Veículo *
                   </label>
                   <select
-                    value={formData.vehicleType || ''}
-                    onChange={(e) => handleInputChange('vehicleType', e.target.value)}
+                    value={formData.vehicleType ?? 'truck'}
+                    onChange={(e) => handleInputChange('vehicleType', e.target.value as AdminVehicle['vehicleType'])}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">Selecione o tipo</option>
@@ -484,8 +656,8 @@ export const VehiclesManagement: React.FC = () => {
                     Status
                   </label>
                   <select
-                    value={formData.status || 'active'}
-                    onChange={(e) => handleInputChange('status', e.target.value)}
+                    value={formData.status ?? 'active'}
+                    onChange={(e) => handleInputChange('status', e.target.value as AdminVehicle['status'])}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="active">Ativo</option>
@@ -501,7 +673,7 @@ export const VehiclesManagement: React.FC = () => {
                 </label>
                 <input
                   type="text"
-                  value={formData.chassisNumber || ''}
+                  value={formData.chassisNumber ?? ''}
                   onChange={(e) => handleInputChange('chassisNumber', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="9BSC4X2008R123456"
@@ -515,8 +687,8 @@ export const VehiclesManagement: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    value={formData.initialOdometer || ''}
-                    onChange={(e) => handleInputChange('initialOdometer', parseInt(e.target.value))}
+                    value={formData.initialOdometer ?? ''}
+                    onChange={(e) => handleInputChange('initialOdometer', parseIntegerInput(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="0"
                     min="0"
@@ -529,8 +701,8 @@ export const VehiclesManagement: React.FC = () => {
                   </label>
                   <input
                     type="number"
-                    value={formData.currentOdometer || ''}
-                    onChange={(e) => handleInputChange('currentOdometer', parseInt(e.target.value))}
+                    value={formData.currentOdometer ?? ''}
+                    onChange={(e) => handleInputChange('currentOdometer', parseIntegerInput(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="45872"
                     min="0"
@@ -611,15 +783,21 @@ export const VehiclesManagement: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                
+
                 {photoError && (
                   <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-600">
                     {photoError}
                   </div>
                 )}
+
+                {modalError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    {modalError}
+                  </div>
+                )}
               </div>
             </div>
-            
+
             <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200">
               <button
                 onClick={handleCloseModal}
@@ -629,10 +807,13 @@ export const VehiclesManagement: React.FC = () => {
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={isSaving}
+                className={`flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg transition-colors ${
+                  isSaving ? 'opacity-75 cursor-not-allowed' : 'hover:bg-blue-700'
+                }`}
               >
                 <Save size={16} />
-                Salvar Alterações
+                {isSaving ? 'Salvando...' : 'Salvar Alterações'}
               </button>
             </div>
           </div>
