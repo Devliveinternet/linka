@@ -502,21 +502,38 @@ export const VehiclesManagement: React.FC = () => {
 
       {/* Edit Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">
-                {editingVehicle ? 'Editar Veículo' : 'Novo Veículo'}
-              </h3>
-              <button
-                onClick={handleCloseModal}
-                className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
-              >
-                <X size={20} />
-              </button>
+        <div className="fixed inset-0 z-50 flex">
+          <div
+            className="flex-1 bg-black/50"
+            role="presentation"
+            onClick={handleCloseModal}
+          />
+
+          <div className="relative w-full max-w-3xl h-full bg-white shadow-2xl flex flex-col">
+            <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
+              <div className="flex items-center justify-between px-6 py-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 mb-1">
+                    Cadastro de Veículo
+                  </p>
+                  <h3 className="text-2xl font-semibold text-gray-900">
+                    {editingVehicle ? 'Editar veículo' : 'Adicionar novo veículo'}
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    Preencha os dados abaixo para criar um device vinculado no Traccar.
+                  </p>
+                </div>
+                <button
+                  onClick={handleCloseModal}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                  aria-label="Fechar mini página"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
-            
-            <div className="p-6 space-y-6">
+
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
