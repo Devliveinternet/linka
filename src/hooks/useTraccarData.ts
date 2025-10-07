@@ -27,7 +27,15 @@ interface TraccarData {
   error: string | null;
 }
 
-export const useTraccarData = (refreshInterval: number = 30000) => {
+interface UseTraccarDataOptions {
+  refreshInterval?: number;
+  autoRefresh?: boolean;
+}
+
+export const useTraccarData = ({
+  refreshInterval = 30000,
+  autoRefresh = true,
+}: UseTraccarDataOptions = {}) => {
   const { apiFetch } = useAuth();
   const [data, setData] = useState<TraccarData>({
     devices: [],
@@ -39,10 +47,16 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
     loading: true,
     error: null,
   });
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      setData(prev => ({ ...prev, loading: true, error: null }));
+      setData(prev => ({
+        ...prev,
+        error: null,
+        // Evita piscar a aplicação inteira após o carregamento inicial
+        loading: isInitialLoad ? true : prev.loading,
+      }));
 
       // Devices (enriquecidos), Alerts e Geofences em paralelo
       const [devices, alerts, geofences] = await Promise.all([
@@ -91,6 +105,9 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
         loading: false,
         error: null,
       });
+      if (isInitialLoad) {
+        setIsInitialLoad(false);
+      }
     } catch (error) {
       console.error('Error fetching Traccar data:', error);
       setData(prev => ({
@@ -98,14 +115,24 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
         loading: false,
         error: error instanceof Error ? error.message : 'Erro desconhecido',
       }));
+      if (isInitialLoad) {
+        setIsInitialLoad(false);
+      }
     }
-  }, [apiFetch]);
+  }, [apiFetch, isInitialLoad]);
 
   useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      return;
+    }
+
     const interval = setInterval(fetchData, refreshInterval);
     return () => clearInterval(interval);
-  }, [fetchData, refreshInterval]);
+  }, [autoRefresh, fetchData, refreshInterval]);
 
   return {
     ...data,
