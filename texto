@@ -1,3 +1,17 @@
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 curl "http://localhost:5055/?id=demo-02&lat=-16.550&lon=-48.953&accuracy=10"
+
+
+# Porta do seu proxy
+PORT=3000
+
+# URL base do Traccar (ajuste host/porta)
+TRACCAR_BASE_URL=http://localhost:8082/api
+
+# Credenciais de login do Traccar
+TRACCAR_USER=
+TRACCAR_PASS=
+
+# (Opcional) restrição de CORS para seu front
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
