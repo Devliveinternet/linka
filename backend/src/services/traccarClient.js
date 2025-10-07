@@ -38,6 +38,13 @@ export const traccar = axios.create(axiosConfig);
 
 export const listDevices   = async () => (await traccar.get("/api/devices")).data;
 export const listPositions = async () => (await traccar.get("/api/positions")).data;
+export const createDevice  = async (payload = {}) => (await traccar.post("/api/devices", payload)).data;
+export const updateDevice  = async (id, payload = {}) => (await traccar.put(`/api/devices/${id}`, payload)).data;
+export const deleteDevice  = async (id) => {
+  await traccar.delete(`/api/devices/${id}`);
+  return { success: true };
+};
+
 export const listEvents = async (params = {}) => {
   try {
     const { data } = await traccar.get("/api/events", { params });
