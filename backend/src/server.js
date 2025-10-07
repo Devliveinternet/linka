@@ -9,6 +9,9 @@ import {
   listTrips,
   listGeofences,
   listRoute,
+  createDevice,
+  updateDevice,
+  deleteDevice,
 } from "./services/traccarClient.js";
 
 import { addSseClient, startRealtimeBridge } from "./realtime/traccarBridge.js";
@@ -32,6 +35,8 @@ import {
   filterEventsByAccess,
   filterTripsByAccess,
   canAccessDevice,
+  getAssignedDeviceIds,
+  updateMasterDeviceAssignments,
 } from "./users/deviceAssignments.js";
 
 // ----------------- setup -----------------
@@ -124,6 +129,93 @@ function sendFiltered(res, fetcher, filter, { soft404 = false, soft400 = false }
     });
 }
 
+const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+
+const toNumberOrUndefined = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const prepareDevicePayload = (input = {}, { requireUniqueId = true } = {}) => {
+  const trackerRaw = input.trackerId ?? input.uniqueId ?? input.imei ?? input.deviceIdentifier ?? "";
+  const uniqueId = trackerRaw != null ? String(trackerRaw).trim() : "";
+
+  if (!uniqueId && requireUniqueId) {
+    const error = new Error("Informe o IMEI/ID do rastreador");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const baseName = input.name ?? input.plate ?? input.model ?? uniqueId;
+  const name = String(baseName ?? "").trim() || uniqueId;
+  const category = input.vehicleType || input.category;
+
+  const baseAttributes = isPlainObject(input.attributes) ? { ...input.attributes } : {};
+
+  const setAttribute = (key, value, { numeric = false } = {}) => {
+    if (value === undefined || value === null || value === "") {
+      delete baseAttributes[key];
+      return;
+    }
+    if (numeric) {
+      const parsed = toNumberOrUndefined(value);
+      if (parsed === undefined) {
+        delete baseAttributes[key];
+        return;
+      }
+      baseAttributes[key] = parsed;
+      return;
+    }
+    baseAttributes[key] = value;
+  };
+
+  setAttribute("plate", input.plate);
+  setAttribute("clientId", input.clientId);
+  setAttribute("brand", input.brand);
+  setAttribute("model", input.model);
+  setAttribute("color", input.color);
+  setAttribute("year", input.year, { numeric: true });
+  setAttribute("chassisNumber", input.chassisNumber);
+  setAttribute("vehicleType", input.vehicleType);
+  setAttribute("initialOdometer", input.initialOdometer, { numeric: true });
+  setAttribute("currentOdometer", input.currentOdometer, { numeric: true });
+  setAttribute("photo", input.photo);
+  setAttribute("status", input.status);
+
+  const payload = { name };
+
+  if (uniqueId) {
+    payload.uniqueId = uniqueId;
+  }
+  if (category) {
+    payload.category = category;
+  }
+  if (input.groupId != null) {
+    payload.groupId = input.groupId;
+  }
+  if (input.contact != null) {
+    payload.contact = input.contact;
+  }
+  if (input.phone != null) {
+    payload.phone = input.phone;
+  }
+
+  if (Object.keys(baseAttributes).length > 0) {
+    payload.attributes = baseAttributes;
+  }
+
+  return payload;
+};
+
+const respondTraccarError = (res, error, fallbackStatus = 500) => {
+  const status = error?.statusCode || error?.response?.status || fallbackStatus;
+  const details = error?.response?.data;
+  const message = error?.message || details?.message || "Erro ao comunicar com o Traccar";
+  console.error("[traccar] erro na operação de dispositivo", status, details || message);
+  res.status(status).json({ error: message, status, details });
+};
+
 // ----------------- health -----------------
 app.get("/health", (_req, res) => res.send("ok"));
 
@@ -131,6 +223,72 @@ app.get("/health", (_req, res) => res.send("ok"));
 traccarRouter.get("/devices", (req, res) => {
   const access = getDeviceAccess(req.user);
   sendFiltered(res, () => listDevices(), (devices) => filterDevicesByAccess(devices, access));
+});
+
+traccarRouter.post("/devices", async (req, res) => {
+  try {
+    const access = getDeviceAccess(req.user);
+    const payload = prepareDevicePayload(req.body || {});
+    const created = await createDevice(payload);
+
+    if (!access.allowAll && access.masterId) {
+      const current = getAssignedDeviceIds(access.masterId);
+      const createdId = created?.id != null ? String(created.id) : null;
+      if (createdId && !current.includes(createdId)) {
+        updateMasterDeviceAssignments(access.masterId, [...current, createdId]);
+      }
+    }
+
+    res.status(201).json(created);
+  } catch (error) {
+    respondTraccarError(res, error, 400);
+  }
+});
+
+traccarRouter.put("/devices/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: "Informe o ID do dispositivo" });
+  }
+
+  const access = getDeviceAccess(req.user);
+  if (!canAccessDevice(access, id)) {
+    return res.status(403).json({ error: "Você não tem acesso a este dispositivo" });
+  }
+
+  try {
+    const payload = prepareDevicePayload({ ...req.body, trackerId: req.body?.trackerId ?? req.body?.uniqueId });
+    const updated = await updateDevice(id, payload);
+    res.json(updated);
+  } catch (error) {
+    respondTraccarError(res, error, 400);
+  }
+});
+
+traccarRouter.delete("/devices/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: "Informe o ID do dispositivo" });
+  }
+
+  const access = getDeviceAccess(req.user);
+  if (!canAccessDevice(access, id)) {
+    return res.status(403).json({ error: "Você não tem acesso a este dispositivo" });
+  }
+
+  try {
+    await deleteDevice(id);
+    if (!access.allowAll && access.masterId) {
+      const current = getAssignedDeviceIds(access.masterId);
+      const normalizedId = String(id);
+      if (current.includes(normalizedId)) {
+        updateMasterDeviceAssignments(access.masterId, current.filter((deviceId) => deviceId !== normalizedId));
+      }
+    }
+    res.json({ success: true });
+  } catch (error) {
+    respondTraccarError(res, error, 400);
+  }
 });
 
 traccarRouter.get("/positions", (req, res) => {
