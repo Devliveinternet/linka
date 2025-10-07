@@ -27,7 +27,15 @@ interface TraccarData {
   error: string | null;
 }
 
-export const useTraccarData = (refreshInterval: number = 30000) => {
+interface UseTraccarDataOptions {
+  refreshInterval?: number;
+  autoRefresh?: boolean;
+}
+
+export const useTraccarData = ({
+  refreshInterval = 30000,
+  autoRefresh = true,
+}: UseTraccarDataOptions = {}) => {
   const { apiFetch } = useAuth();
   const [data, setData] = useState<TraccarData>({
     devices: [],
@@ -115,9 +123,16 @@ export const useTraccarData = (refreshInterval: number = 30000) => {
 
   useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      return;
+    }
+
     const interval = setInterval(fetchData, refreshInterval);
     return () => clearInterval(interval);
-  }, [fetchData, refreshInterval]);
+  }, [autoRefresh, fetchData, refreshInterval]);
 
   return {
     ...data,

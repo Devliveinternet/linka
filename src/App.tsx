@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation, Location } from 'react-router-dom';
 import { Sidebar } from './components/Layout/Sidebar';
 import { Header } from './components/Layout/Header';
@@ -61,6 +61,7 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
     allowedViews.includes('dashboard') ? 'dashboard' : allowedViews[0]
   );
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const shouldAutoRefresh = activeView !== 'admin';
 
   const {
     devices,
@@ -72,7 +73,16 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
     loading,
     error,
     refetch
-  } = useTraccarData();
+  } = useTraccarData({ autoRefresh: shouldAutoRefresh });
+
+  const wasAutoRefreshDisabled = useRef(!shouldAutoRefresh);
+
+  useEffect(() => {
+    if (shouldAutoRefresh && wasAutoRefreshDisabled.current) {
+      refetch();
+    }
+    wasAutoRefreshDisabled.current = !shouldAutoRefresh;
+  }, [refetch, shouldAutoRefresh]);
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
