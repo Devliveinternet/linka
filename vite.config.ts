@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: { proxy: { '/traccar': 'http://localhost:3000' },
             host: true,
-            port: 5173
+            port: 8080
 },
   optimizeDeps: {
     exclude: ['lucide-react'],
