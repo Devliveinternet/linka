@@ -457,7 +457,7 @@ traccarRouter.get("/devices/enriched", async (req, res) => {
 app.use("/traccar", traccarRouter);
 
 // ----------------- start -----------------
-app.listen(PORT, () => {
-  console.log(`API up em http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API up em http://0.0.0.0:${PORT}`);
   startRealtimeBridge(); // inicia a ponte WS->SSE
 });
