@@ -64,7 +64,6 @@ app.use(cors({
   allowedHeaders: ['Content-Type','Authorization'],
 }));
 app.use(express.json());
-app.options('*', cors());
 
 const traccarRouter = express.Router();
 traccarRouter.use(requireAuth);
