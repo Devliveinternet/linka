@@ -52,12 +52,19 @@ for (const user of getAllUsers()) {
   }
 }
 
+const ALLOWED_ORIGINS = [
+  'http://45.235.44.146:8080', // seu front
+];
+
 const origins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
-app.use(cors({ origin: origins.length ? origins : true }));app.use(cors({
-  origin: ["http://45.235.44.146:5173", "http://45.235.44.146:8080"], // o endereço real do front
-  credentials: true
+app.use(cors({
+  origin: ALLOWED_ORIGINS,
+  credentials: true, // se usa cookies/autorização
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
 }));
 app.use(express.json());
+app.options('*', cors());
 
 const traccarRouter = express.Router();
 traccarRouter.use(requireAuth);
