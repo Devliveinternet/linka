@@ -53,7 +53,10 @@ for (const user of getAllUsers()) {
 }
 
 const origins = (process.env.CORS_ORIGINS || "").split(",").filter(Boolean);
-app.use(cors({ origin: origins.length ? origins : true }));
+app.use(cors({ origin: origins.length ? origins : true }));app.use(cors({
+  origin: ["http://45.235.44.146:5173", "http://45.235.44.146:8080"], // o endereço real do front
+  credentials: true
+}));
 app.use(express.json());
 
 const traccarRouter = express.Router();
