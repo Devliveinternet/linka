@@ -60,7 +60,8 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
   const [activeView, setActiveView] = useState<typeof VIEW_ORDER[number]>(
     allowedViews.includes('dashboard') ? 'dashboard' : allowedViews[0]
   );
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const shouldAutoRefresh = activeView !== 'admin';
 
   const {
@@ -83,6 +84,22 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
     }
     wasAutoRefreshDisabled.current = !shouldAutoRefresh;
   }, [refetch, shouldAutoRefresh]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setIsMobileSidebarOpen(false);
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
@@ -164,17 +181,24 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
   };
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 lg:flex">
       <Sidebar
         activeView={activeView}
         onViewChange={setActiveView}
-        isCollapsed={isCollapsed}
-        onToggleCollapse={() => setIsCollapsed(!isCollapsed)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
         allowedViews={allowedViews}
+        isMobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <Header user={user} alertCount={pendingAlerts} onLogout={onLogout} />
+        <Header
+          user={user}
+          alertCount={pendingAlerts}
+          onLogout={onLogout}
+          onToggleSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+        />
 
         <main className="flex-1 p-3 sm:p-6 overflow-auto">
           {error && (
