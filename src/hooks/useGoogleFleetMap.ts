@@ -15,6 +15,7 @@ import {
   getVehiclePhotoFromDevice,
   getVehicleTypeFromDevice
 } from '../utils/vehicleIcons';
+import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../utils/googleMaps';
 import { Circle, Navigation, Square, type LucideIcon } from 'lucide-react';
 
 type MapStyle = 'roadmap' | 'satellite' | 'terrain';
@@ -212,7 +213,8 @@ export const useGoogleFleetMap = ({
       loaderRef.current = new Loader({
         apiKey,
         version: 'weekly',
-        libraries: ['maps', 'marker']
+        libraries: [...GOOGLE_MAPS_LIBRARIES],
+        id: GOOGLE_MAPS_SCRIPT_ID
       });
     }
 
