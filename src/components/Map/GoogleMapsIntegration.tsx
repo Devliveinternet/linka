@@ -1,27 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Loader } from '@googlemaps/js-api-loader';
-import { 
-  ZoomIn, 
-  ZoomOut, 
-  RotateCcw, 
-  Maximize, 
-  Layers, 
-  Filter,
-  MapPin,
-  Navigation,
-  Circle,
-  Square,
-  Eye,
-  EyeOff
-} from 'lucide-react';
-import { Device } from '../../types';
-import { createVehicleIcon, getVehicleTypeFromDevice, getVehiclePhotoFromDevice } from '../../utils/vehicleIcons';
+import React from 'react';
+import { ZoomIn, ZoomOut, RotateCcw, Navigation, Circle, Square } from 'lucide-react';
+import { Device, Vehicle } from '../../types';
+import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
 
 interface GoogleMapsIntegrationProps {
   apiKey: string;
   onApiKeyChange: (apiKey: string) => void;
   devices: Device[];
-  vehicles?: any[];
+  vehicles?: Vehicle[];
 }
 
 export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
@@ -29,223 +15,31 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
   devices,
   vehicles = []
 }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
-  const [selectedDevice, setSelectedDevice] = useState<string>();
-  const [mapStyle, setMapStyle] = useState<'roadmap' | 'satellite' | 'terrain'>('roadmap');
-  const [showOfflineDevices, setShowOfflineDevices] = useState(true);
-  const [showGeofences, setShowGeofences] = useState(true);
-  const [showTraffic, setShowTraffic] = useState(false);
-  const markersRef = useRef<google.maps.Marker[]>([]);
-  const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
-
-  const initializeMap = async () => {
-    if (!apiKey || !mapRef.current) return;
-
-    try {
-      const loader = new Loader({
-        apiKey,
-        version: 'weekly',
-        libraries: ['maps', 'marker']
-      });
-
-      await loader.load();
-
-      const mapInstance = new google.maps.Map(mapRef.current, {
-        center: { lat: -16.6799, lng: -49.255 },
-        zoom: 12,
-        mapTypeId: google.maps.MapTypeId.ROADMAP,
-        styles: [
-          {
-            featureType: 'poi',
-            elementType: 'labels',
-            stylers: [{ visibility: 'off' }]
-          }
-        ],
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: false,
-        zoomControl: false
-      });
-
-      setMap(mapInstance);
-      addDeviceMarkers(mapInstance);
-    } catch (err) {
-      console.error('Error initializing map:', err);
-    }
-  };
-
-  const addDeviceMarkers = (mapInstance: google.maps.Map) => {
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.setMap(null));
-    markersRef.current = [];
-
-    const filteredDevices = showOfflineDevices ? devices : devices.filter(d => d.status === 'online');
-
-    filteredDevices.forEach((device) => {
-      if (!device.position) return;
-
-      const position = {
-        lat: device.position.lat,
-        lng: device.position.lon
-      };
-
-      // Create custom marker icon based on device status
-      const getMarkerIcon = () => {
-        const vehicleType = getVehicleTypeFromDevice(device.id, vehicles);
-        const vehiclePhoto = getVehiclePhotoFromDevice(device.id, vehicles);
-        const isMoving = device.position!.ignition && device.position!.speed > 5;
-        const isSelected = selectedDevice === device.id;
-        
-        return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
-      };
-
-      const marker = new google.maps.Marker({
-        position,
-        map: mapInstance,
-        icon: getMarkerIcon(),
-        title: `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`
-      });
-
-      // Create info window
-      const infoWindow = new google.maps.InfoWindow({
-        content: `
-          <div style="padding: 12px; min-width: 250px; font-family: system-ui;">
-            <h3 style="margin: 0 0 8px 0; font-weight: bold; color: #111827;">${device.model}</h3>
-            <div style="margin-bottom: 8px;">
-              <span style="color: #6B7280; font-size: 12px;">IMEI:</span>
-              <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.imei}</span>
-            </div>
-            <div style="margin-bottom: 8px;">
-              <span style="color: #6B7280; font-size: 12px;">Status:</span>
-              <span style="color: ${device.status === 'online' ? '#10B981' : '#6B7280'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.status}</span>
-            </div>
-            ${device.position ? `
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Velocidade:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.speed} km/h</span>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Ignição:</span>
-                <span style="color: ${device.position.ignition ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.ignition ? 'Ligada' : 'Desligada'}</span>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Odômetro:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.odometer.toLocaleString()} km</span>
-              </div>
-              ${device.position.fuel ? `
-                <div style="margin-bottom: 4px;">
-                  <span style="color: #6B7280; font-size: 12px;">Combustível:</span>
-                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.fuel}%</span>
-                </div>
-              ` : ''}
-              <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5E7EB;">
-                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${new Date(device.lastUpdate).toLocaleString('pt-BR')}</span>
-              </div>
-            ` : ''}
-          </div>
-        `
-      });
-
-      marker.addListener('click', () => {
-        setSelectedDevice(device.id);
-        
-        // Close other info windows
-        markersRef.current.forEach(m => {
-          if (m !== marker && (m as any).infoWindow) {
-            (m as any).infoWindow.close();
-          }
-        });
-        
-        infoWindow.open(mapInstance, marker);
-        (marker as any).infoWindow = infoWindow;
-      });
-
-      markersRef.current.push(marker);
-    });
-  };
-
-  const handleZoomIn = () => {
-    if (map) {
-      const currentZoom = map.getZoom() || 12;
-      map.setZoom(currentZoom + 1);
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (map) {
-      const currentZoom = map.getZoom() || 12;
-      map.setZoom(Math.max(currentZoom - 1, 1));
-    }
-  };
-
-  const handleResetView = () => {
-    if (map) {
-      map.setCenter({ lat: -16.6799, lng: -49.255 });
-      map.setZoom(12);
-    }
-  };
-
-  const handleMapStyleChange = (style: 'roadmap' | 'satellite' | 'terrain') => {
-    if (map) {
-      const mapTypeId = {
-        roadmap: google.maps.MapTypeId.ROADMAP,
-        satellite: google.maps.MapTypeId.SATELLITE,
-        terrain: google.maps.MapTypeId.TERRAIN
-      };
-      map.setMapTypeId(mapTypeId[style]);
-      setMapStyle(style);
-    }
-  };
-
-  const toggleTraffic = () => {
-    if (map) {
-      if (showTraffic && trafficLayerRef.current) {
-        trafficLayerRef.current.setMap(null);
-        trafficLayerRef.current = null;
-      } else if (!showTraffic) {
-        trafficLayerRef.current = new google.maps.TrafficLayer();
-        trafficLayerRef.current.setMap(map);
-      }
-      setShowTraffic(!showTraffic);
-    }
-  };
-
-  useEffect(() => {
-    initializeMap();
-  }, [apiKey]);
-
-  useEffect(() => {
-    if (map) {
-      addDeviceMarkers(map);
-    }
-  }, [map, devices, showOfflineDevices, selectedDevice]);
-
-  const getStatusColor = (device: Device) => {
-    if (device.status === 'offline') return 'text-gray-400';
-    if (device.position?.ignition && device.position?.speed > 5) return 'text-green-500';
-    if (device.position?.ignition) return 'text-yellow-500';
-    return 'text-blue-500';
-  };
-
-  const getStatusIcon = (device: Device) => {
-    if (device.status === 'offline') return Circle;
-    if (device.position?.ignition && device.position?.speed > 5) return Navigation;
-    if (device.position?.ignition) return Square;
-    return Circle;
-  };
-
-  const getStatusLabel = (device: Device) => {
-    if (device.status === 'offline') return 'Offline';
-    if (device.position?.ignition && device.position?.speed > 5) return 'Em movimento';
-    if (device.position?.ignition) return 'Parado (ligado)';
-    return 'Parado (desligado)';
-  };
-
-  const onlineDevices = devices.filter(d => d.status === 'online');
-  const movingDevices = devices.filter(d => d.position?.ignition && d.position?.speed > 5);
-  const stoppedDevices = devices.filter(d => d.status === 'online' && d.position?.ignition && d.position?.speed <= 5);
-  const offlineDevices = devices.filter(d => d.status === 'offline');
+  const {
+    mapRef,
+    selectedDevice,
+    setSelectedDevice,
+    mapStyle,
+    handleMapStyleChange,
+    handleZoomIn,
+    handleZoomOut,
+    handleResetView,
+    toggleTraffic,
+    showTraffic,
+    showOfflineDevices,
+    setShowOfflineDevices,
+    showGeofences,
+    setShowGeofences,
+    filteredDevices,
+    onlineDevices,
+    movingDevices,
+    stoppedDevices,
+    offlineDevices,
+    getStatusColor,
+    getStatusIcon,
+    getStatusLabel,
+    focusOnDevice
+  } = useGoogleFleetMap({ apiKey, devices, vehicles });
 
   return (
     <div className="space-y-6">
@@ -388,16 +182,16 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
           </div>
 
           {/* Filters */}
-          <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h3 className="text-sm font-semibold text-gray-900 mb-3">Filtros</h3>
-            <div className="space-y-3">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={showOfflineDevices}
-                  onChange={(e) => setShowOfflineDevices(e.target.checked)}
-                  className="rounded text-blue-600"
-                />
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">Filtros</h3>
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={showOfflineDevices}
+                        onChange={(e) => setShowOfflineDevices(e.target.checked)}
+                        className="rounded text-blue-600"
+                      />
                 <span className="text-sm text-gray-700">Mostrar dispositivos offline</span>
               </label>
               <label className="flex items-center gap-2">
@@ -418,19 +212,16 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
               <h3 className="text-sm font-semibold text-gray-900">Dispositivos</h3>
             </div>
             <div className="max-h-80 overflow-y-auto">
-              {(showOfflineDevices ? devices : onlineDevices).map((device) => {
+              {filteredDevices.map((device) => {
                 const StatusIcon = getStatusIcon(device);
                 const isSelected = selectedDevice === device.id;
-                
+
                 return (
                   <button
                     key={device.id}
                     onClick={() => {
                       setSelectedDevice(device.id);
-                      if (map && device.position) {
-                        map.setCenter({ lat: device.position.lat, lng: device.position.lon });
-                        map.setZoom(15);
-                      }
+                      focusOnDevice(device.id);
                     }}
                     className={`w-full p-3 text-left border-b border-gray-100 hover:bg-gray-50 transition-colors ${
                       isSelected ? 'bg-blue-50 border-blue-200' : ''

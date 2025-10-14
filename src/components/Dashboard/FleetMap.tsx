@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MapPin, Circle, Square, Navigation, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { MapPin, Navigation, Square, Circle, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
-import { createVehicleIcon, getVehicleTypeFromDevice, getVehiclePhotoFromDevice } from '../../utils/vehicleIcons';
+import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
 
 interface FleetMapProps {
   devices: Device[];
@@ -10,18 +10,14 @@ interface FleetMapProps {
   onDeviceSelect: (deviceId: string) => void;
 }
 
-export const FleetMap: React.FC<FleetMapProps> = ({ 
-  devices, 
+export const FleetMap: React.FC<FleetMapProps> = ({
+  devices,
   vehicles = [],
-  selectedDevice, 
-  onDeviceSelect 
+  selectedDevice,
+  onDeviceSelect
 }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<google.maps.Map | null>(null);
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
-  const markersRef = useRef<google.maps.Marker[]>([]);
 
-  // Load API key from localStorage
   useEffect(() => {
     const savedApiKey = localStorage.getItem('googleMapsApiKey');
     if (savedApiKey) {
@@ -29,331 +25,333 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     }
   }, []);
 
-  // Initialize Google Maps
-  const initializeMap = async () => {
-    if (!googleMapsApiKey || !mapRef.current) return;
+  const {
+    mapRef,
+    selectedDevice: internalSelectedDevice,
+    setSelectedDevice,
+    mapStyle,
+    handleMapStyleChange,
+    handleZoomIn,
+    handleZoomOut,
+    handleResetView,
+    toggleTraffic,
+    showTraffic,
+    showOfflineDevices,
+    setShowOfflineDevices,
+    showGeofences,
+    setShowGeofences,
+    filteredDevices,
+    onlineDevices,
+    movingDevices,
+    stoppedDevices,
+    offlineDevices,
+    getStatusColor,
+    getStatusIcon,
+    getStatusLabel,
+    focusOnDevice
+  } = useGoogleFleetMap({ apiKey: googleMapsApiKey, devices, vehicles });
 
-    try {
-      // Load Google Maps API
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=maps`;
-      script.async = true;
-      script.defer = true;
-      
-      script.onload = () => {
-        if (mapRef.current && window.google) {
-          const mapInstance = new google.maps.Map(mapRef.current, {
-            center: { lat: -16.6799, lng: -49.255 },
-            zoom: 12,
-            mapTypeId: google.maps.MapTypeId.ROADMAP,
-            styles: [
-              {
-                featureType: 'poi',
-                elementType: 'labels',
-                stylers: [{ visibility: 'off' }]
-              }
-            ],
-            mapTypeControl: false,
-            streetViewControl: false,
-            fullscreenControl: false,
-            zoomControl: false
-          });
-
-          setMap(mapInstance);
-        }
-      };
-
-      script.onerror = () => {
-        console.error('Failed to load Google Maps API');
-      };
-
-      // Only add script if it doesn't exist
-      if (!document.querySelector(`script[src*="maps.googleapis.com"]`)) {
-        document.head.appendChild(script);
-      } else if (window.google && mapRef.current) {
-        // Google Maps already loaded
-        const mapInstance = new google.maps.Map(mapRef.current, {
-          center: { lat: -16.6799, lng: -49.255 },
-          zoom: 12,
-          mapTypeId: google.maps.MapTypeId.ROADMAP,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-          zoomControl: false
-        });
-        setMap(mapInstance);
-      }
-    } catch (err) {
-      console.error('Error initializing map:', err);
-    }
-  };
-
-  // Add device markers to map
-  const addDeviceMarkers = (mapInstance: google.maps.Map) => {
-    // Clear existing markers
-    markersRef.current.forEach(marker => marker.setMap(null));
-    markersRef.current = [];
-
-    devices.forEach((device) => {
-      if (!device.position) return;
-
-      const position = {
-        lat: device.position.lat,
-        lng: device.position.lon
-      };
-
-      // Create custom marker icon based on device status
-      const getMarkerIcon = () => {
-        const vehicleType = getVehicleTypeFromDevice(device.id, vehicles);
-        const vehiclePhoto = getVehiclePhotoFromDevice(device.id, vehicles);
-        const isMoving = device.position!.ignition && device.position!.speed > 5;
-        const isSelected = selectedDevice === device.id;
-        
-        return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
-      };
-
-      const marker = new google.maps.Marker({
-        position,
-        map: mapInstance,
-        icon: getMarkerIcon(),
-        title: `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`
-      });
-
-      // Create info window
-      const infoWindow = new google.maps.InfoWindow({
-        content: `
-          <div style="padding: 12px; min-width: 250px; font-family: system-ui;">
-            <h3 style="margin: 0 0 8px 0; font-weight: bold; color: #111827;">${device.model}</h3>
-            <div style="margin-bottom: 8px;">
-              <span style="color: #6B7280; font-size: 12px;">IMEI:</span>
-              <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.imei}</span>
-            </div>
-            <div style="margin-bottom: 8px;">
-              <span style="color: #6B7280; font-size: 12px;">Status:</span>
-              <span style="color: ${device.status === 'online' ? '#10B981' : '#6B7280'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.status}</span>
-            </div>
-            ${device.position ? `
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Velocidade:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.speed} km/h</span>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Ignição:</span>
-                <span style="color: ${device.position.ignition ? '#10B981' : '#EF4444'}; font-size: 12px; margin-left: 4px; font-weight: 500;">${device.position.ignition ? 'Ligada' : 'Desligada'}</span>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: #6B7280; font-size: 12px;">Odômetro:</span>
-                <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.odometer.toLocaleString()} km</span>
-              </div>
-              ${device.position.fuel ? `
-                <div style="margin-bottom: 4px;">
-                  <span style="color: #6B7280; font-size: 12px;">Combustível:</span>
-                  <span style="color: #374151; font-size: 12px; margin-left: 4px;">${device.position.fuel}%</span>
-                </div>
-              ` : ''}
-              <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E5E7EB;">
-                <span style="color: #9CA3AF; font-size: 11px;">Última atualização: ${new Date(device.lastUpdate).toLocaleString('pt-BR')}</span>
-              </div>
-            ` : ''}
-          </div>
-        `
-      });
-
-      marker.addListener('click', () => {
-        onDeviceSelect(device.id);
-        
-        // Close other info windows
-        markersRef.current.forEach(m => {
-          if (m !== marker && (m as any).infoWindow) {
-            (m as any).infoWindow.close();
-          }
-        });
-        
-        infoWindow.open(mapInstance, marker);
-        (marker as any).infoWindow = infoWindow;
-      });
-
-      markersRef.current.push(marker);
-    });
-  };
-
-  // Map control handlers
-  const handleZoomIn = () => {
-    if (map) {
-      const currentZoom = map.getZoom() || 12;
-      map.setZoom(currentZoom + 1);
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (map) {
-      const currentZoom = map.getZoom() || 12;
-      map.setZoom(Math.max(currentZoom - 1, 1));
-    }
-  };
-
-  const handleResetView = () => {
-    if (map) {
-      map.setCenter({ lat: -16.6799, lng: -49.255 });
-      map.setZoom(12);
-    }
-  };
-
-  // Initialize map when API key is available
   useEffect(() => {
-    if (googleMapsApiKey) {
-      initializeMap();
+    if (selectedDevice) {
+      setSelectedDevice(selectedDevice);
+      focusOnDevice(selectedDevice);
+    } else {
+      setSelectedDevice(undefined);
     }
-  }, [googleMapsApiKey]);
+  }, [selectedDevice, setSelectedDevice, focusOnDevice]);
 
-  // Update markers when devices or selection changes
   useEffect(() => {
-    if (map) {
-      addDeviceMarkers(map);
+    if (internalSelectedDevice && internalSelectedDevice !== selectedDevice) {
+      onDeviceSelect(internalSelectedDevice);
     }
-  }, [map, devices, selectedDevice]);
+  }, [internalSelectedDevice, selectedDevice, onDeviceSelect]);
 
-  // Simulate real-time position updates
-  useEffect(() => {
-    // Real-time updates are now handled by the useTraccarData hook
-    // This effect is kept for any additional real-time logic if needed
-  }, []);
-
-  const getStatusColor = (device: Device) => {
-    if (device.status === 'offline') return 'text-gray-400';
-    if (device.position?.ignition) return 'text-green-500';
-    return 'text-yellow-500';
+  const handleDeviceSelect = (deviceId: string) => {
+    setSelectedDevice(deviceId);
+    focusOnDevice(deviceId);
+    if (deviceId !== selectedDevice) {
+      onDeviceSelect(deviceId);
+    }
   };
 
-  const getStatusIcon = (device: Device) => {
-    if (device.status === 'offline') return Circle;
-    if (device.position?.ignition) return Navigation;
-    return Square;
-  };
-
-  // If Google Maps is available and API key is configured, show interactive map
   if (googleMapsApiKey && typeof window !== 'undefined') {
     return (
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="bg-gray-50 px-3 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
-          <h3 className="text-base sm:text-lg font-semibold text-gray-900">Mapa da Frota</h3>
-          <p className="text-xs sm:text-sm text-gray-600">Visualização em tempo real</p>
+        <div className="bg-gray-50 px-4 py-4 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">Mapa da Frota</h3>
+          <p className="text-sm text-gray-600">Visualização em tempo real com os mesmos recursos do módulo de mapas</p>
         </div>
-        
-        <div className="relative h-64 sm:h-80 lg:h-96">
+
+        <div className="relative h-72 sm:h-80 lg:h-96">
           <div ref={mapRef} className="w-full h-full" />
-          
-          {/* Map Controls */}
-          <div className="absolute top-4 right-4 space-y-2">
-            <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
+
+          <div className="absolute top-4 right-4 space-y-2 z-10">
+            <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
               <button
                 onClick={handleZoomIn}
-                className="block w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
-                title="Zoom In"
+                className="block w-9 h-9 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
+                title="Mais zoom"
               >
                 <ZoomIn size={14} />
               </button>
               <button
                 onClick={handleZoomOut}
-                className="block w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                title="Zoom Out"
+                className="block w-9 h-9 flex items-center justify-center hover:bg-gray-50 transition-colors"
+                title="Menos zoom"
               >
                 <ZoomOut size={14} />
               </button>
             </div>
+
+            <div className="bg-white rounded-lg shadow border border-gray-200 p-2 space-y-1">
+              <button
+                onClick={() => handleMapStyleChange('roadmap')}
+                className={`w-full px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  mapStyle === 'roadmap' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Mapa
+              </button>
+              <button
+                onClick={() => handleMapStyleChange('satellite')}
+                className={`w-full px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  mapStyle === 'satellite' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Satélite
+              </button>
+              <button
+                onClick={() => handleMapStyleChange('terrain')}
+                className={`w-full px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  mapStyle === 'terrain' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Terreno
+              </button>
+            </div>
+
+            <button
+              onClick={toggleTraffic}
+              className={`bg-white rounded-lg shadow border border-gray-200 px-3 py-2 text-xs font-medium transition-colors ${
+                showTraffic ? 'text-orange-700 bg-orange-100 border-orange-200' : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Tráfego
+            </button>
+
             <button
               onClick={handleResetView}
-              className="bg-white rounded-lg shadow-lg border border-gray-200 w-8 h-8 flex items-center justify-center hover:bg-gray-50 transition-colors"
-              title="Reset View"
+              className="bg-white rounded-lg shadow border border-gray-200 w-9 h-9 flex items-center justify-center hover:bg-gray-50 transition-colors"
+              title="Centralizar mapa"
             >
               <RotateCcw size={14} />
             </button>
           </div>
+
+          <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur rounded-lg shadow border border-gray-200 p-3">
+            <h4 className="text-xs font-semibold text-gray-900 uppercase tracking-wide mb-2">Legenda</h4>
+            <div className="space-y-1.5 text-xs text-gray-700">
+              <div className="flex items-center gap-2">
+                <Navigation size={12} className="text-green-500" />
+                <span>Em movimento</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Square size={12} className="text-yellow-500" />
+                <span>Parado (ligado)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Circle size={12} className="text-blue-500" />
+                <span>Parado (desligado)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Circle size={12} className="text-gray-400" />
+                <span>Offline</span>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        <div className="p-3 sm:p-4 bg-gray-50 border-t border-gray-200">
-          <div className="flex items-center gap-3 sm:gap-6 text-xs sm:text-sm overflow-x-auto">
-            <div className="flex items-center gap-2">
-              <Navigation size={14} className="text-green-500 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Em movimento</span>
+
+        <div className="bg-gray-50 border-t border-gray-200 p-4 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-xl font-semibold text-green-600">{onlineDevices.length}</p>
+              <p className="text-xs text-gray-600">Online</p>
             </div>
-            <div className="flex items-center gap-2">
-              <Square size={14} className="text-yellow-500 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Parado (ligado)</span>
+            <div className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-xl font-semibold text-blue-600">{movingDevices.length}</p>
+              <p className="text-xs text-gray-600">Em movimento</p>
             </div>
-            <div className="flex items-center gap-2">
-              <Circle size={14} className="text-gray-400 flex-shrink-0" />
-              <span className="text-gray-700 whitespace-nowrap">Offline</span>
+            <div className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-xl font-semibold text-yellow-600">{stoppedDevices.length}</p>
+              <p className="text-xs text-gray-600">Parados</p>
             </div>
+            <div className="bg-white rounded-lg border border-gray-200 p-3 text-center">
+              <p className="text-xl font-semibold text-gray-600">{offlineDevices.length}</p>
+              <p className="text-xs text-gray-600">Offline</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">Filtros rápidos</h4>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showOfflineDevices}
+                  onChange={(event) => setShowOfflineDevices(event.target.checked)}
+                  className="rounded text-blue-600"
+                />
+                <span className="text-sm text-gray-700">Mostrar dispositivos offline</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showGeofences}
+                  onChange={(event) => setShowGeofences(event.target.checked)}
+                  className="rounded text-blue-600"
+                />
+                <span className="text-sm text-gray-700">Mostrar cercas virtuais</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-900">Dispositivos</h4>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {filteredDevices.map((device) => {
+                  const StatusIcon = getStatusIcon(device);
+                  const isSelected = internalSelectedDevice === device.id;
+
+                  return (
+                    <button
+                      key={device.id}
+                      onClick={() => handleDeviceSelect(device.id)}
+                      className={`w-full p-3 text-left border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                        isSelected ? 'bg-blue-50 border-blue-200' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <StatusIcon size={16} className={getStatusColor(device)} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">{device.model}</p>
+                          <p className="text-xs text-gray-600 truncate">{getStatusLabel(device)}</p>
+                          {device.position && (
+                            <p className="text-xs text-gray-500">{device.position.speed} km/h</p>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {internalSelectedDevice && (() => {
+              const device = devices.find((item) => item.id === internalSelectedDevice);
+              if (!device) return null;
+
+              return (
+                <div className="bg-white rounded-xl border border-gray-200 p-4">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-3">Detalhes do dispositivo</h4>
+                  <div className="space-y-3 text-sm text-gray-700">
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">Modelo</p>
+                      <p className="font-medium text-gray-900">{device.model}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">IMEI</p>
+                      <p className="font-medium text-gray-900">{device.imei}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">Status</p>
+                      <p className={`font-medium ${getStatusColor(device)}`}>{getStatusLabel(device)}</p>
+                    </div>
+                    {device.position && (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Velocidade</p>
+                            <p className="font-medium text-gray-900">{device.position.speed} km/h</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Direção</p>
+                            <p className="font-medium text-gray-900">{device.position.heading}°</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide">Coordenadas</p>
+                          <p className="font-medium text-gray-900">
+                            {device.position.lat.toFixed(6)}, {device.position.lon.toFixed(6)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 uppercase tracking-wide">Odômetro</p>
+                          <p className="font-medium text-gray-900">{device.position.odometer.toLocaleString()} km</p>
+                        </div>
+                        {device.position.fuel !== undefined && (
+                          <div>
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Combustível</p>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                <div
+                                  className="bg-blue-500 h-2 rounded-full"
+                                  style={{ width: `${device.position.fuel}%` }}
+                                />
+                              </div>
+                              <span className="font-medium text-gray-900">{device.position.fuel}%</span>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide">Última atualização</p>
+                      <p className="font-medium text-gray-900">{new Date(device.lastUpdate).toLocaleString('pt-BR')}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
     );
   }
 
-  // Fallback to placeholder map if no API key is configured
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="bg-gray-50 px-3 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
-        <h3 className="text-base sm:text-lg font-semibold text-gray-900">Mapa da Frota</h3>
-        <p className="text-xs sm:text-sm text-gray-600">Visualização em tempo real</p>
+      <div className="bg-gray-50 px-4 py-4 border-b border-gray-200">
+        <h3 className="text-lg font-semibold text-gray-900">Mapa da Frota</h3>
+        <p className="text-sm text-gray-600">Visualização em tempo real</p>
       </div>
-      
-      <div className="relative h-64 sm:h-80 lg:h-96 bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center">
-        {/* Placeholder for map */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center">
-            <MapPin className="w-12 h-12 sm:w-16 sm:h-16 text-gray-400 mx-auto mb-2 sm:mb-4" />
-            <p className="text-sm sm:text-base text-gray-500 font-medium">Mapa Interativo</p>
-            <p className="text-xs sm:text-sm text-gray-400">Configure a API do Google Maps em Administração → Configurações</p>
-          </div>
-        </div>
-        
-        {/* Device markers overlay for placeholder */}
-        <div className="absolute inset-2 sm:inset-4">
-          {devices.map((device, index) => {
-            const StatusIcon = getStatusIcon(device);
-            const isSelected = selectedDevice === device.id;
-            
-            return (
-              <button
-                key={device.id}
-                onClick={() => onDeviceSelect(device.id)}
-                className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200 ${
-                  isSelected ? 'scale-125 z-10' : 'hover:scale-110'
-                }`}
-                style={{
-                  left: `${20 + (index * 15)}%`,
-                  top: `${30 + (index * 10)}%`
-                }}
-                title={`${device.model} - ${device.status}`}
-              >
-                <div className={`p-1 sm:p-2 rounded-full bg-white shadow-lg border-2 ${
-                  isSelected ? 'border-blue-500' : 'border-gray-300'
-                }`}>
-                  <StatusIcon 
-                    size={14} 
-                    className={`sm:w-4 sm:h-4 ${getStatusColor(device)}`}
-                  />
-                </div>
-              </button>
-            );
-          })}
+      <div className="relative h-72 sm:h-80 lg:h-96 bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center">
+        <div className="text-center">
+          <MapPin className="w-12 h-12 sm:w-16 sm:h-16 text-gray-400 mx-auto mb-3" />
+          <p className="text-sm sm:text-base text-gray-500 font-medium">Configure a API do Google Maps</p>
+          <p className="text-xs sm:text-sm text-gray-400 max-w-xs mx-auto">
+            Para visualizar o mapa interativo, acesse Administração → Configurações → Mapas e informe sua chave da API do Google Maps.
+          </p>
         </div>
       </div>
-      
-      <div className="p-3 sm:p-4 bg-gray-50 border-t border-gray-200">
-        <div className="flex items-center gap-3 sm:gap-6 text-xs sm:text-sm overflow-x-auto">
+      <div className="p-4 bg-gray-50 border-t border-gray-200">
+        <div className="flex items-center gap-4 text-xs sm:text-sm overflow-x-auto">
           <div className="flex items-center gap-2">
-            <Navigation size={14} className="text-green-500 flex-shrink-0" />
+            <Navigation size={14} className="text-green-500" />
             <span className="text-gray-700 whitespace-nowrap">Em movimento</span>
           </div>
           <div className="flex items-center gap-2">
-            <Square size={14} className="text-yellow-500 flex-shrink-0" />
+            <Square size={14} className="text-yellow-500" />
             <span className="text-gray-700 whitespace-nowrap">Parado (ligado)</span>
           </div>
           <div className="flex items-center gap-2">
-            <Circle size={14} className="text-gray-400 flex-shrink-0" />
+            <Circle size={14} className="text-blue-500" />
+            <span className="text-gray-700 whitespace-nowrap">Parado (desligado)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Circle size={14} className="text-gray-400" />
             <span className="text-gray-700 whitespace-nowrap">Offline</span>
           </div>
         </div>
@@ -361,3 +359,4 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     </div>
   );
 };
+
