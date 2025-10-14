@@ -1,5 +1,5 @@
 import React from 'react';
-import { ZoomIn, ZoomOut, RotateCcw, Navigation, Circle, Square } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, Navigation, Circle, Square, AlertTriangle } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
 import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
 
@@ -38,7 +38,8 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
     getStatusColor,
     getStatusIcon,
     getStatusLabel,
-    focusOnDevice
+    focusOnDevice,
+    loadError
   } = useGoogleFleetMap({ apiKey, devices, vehicles });
 
   return (
@@ -54,99 +55,117 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
         {/* Map */}
         <div className="lg:col-span-3">
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="relative h-[600px]" ref={mapRef}>
-              {/* Map Controls Overlay */}
-              <div className="absolute top-4 right-4 z-10 space-y-2">
-                {/* Zoom Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
-                  <button
-                    onClick={handleZoomIn}
-                    className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
-                  >
-                    <ZoomIn size={16} />
-                  </button>
-                  <button
-                    onClick={handleZoomOut}
-                    className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                  >
-                    <ZoomOut size={16} />
-                  </button>
-                </div>
+            <div className="relative h-[600px]">
+              <div ref={mapRef} className="absolute inset-0" />
 
-                {/* Map Style Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
-                  <div className="space-y-1">
+              {loadError ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-white/95 text-center px-6">
+                  <AlertTriangle className="w-10 h-10 text-yellow-600" />
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-semibold text-gray-900">Não foi possível carregar o Google Maps</h3>
+                    <p className="text-sm text-gray-600 max-w-md mx-auto">{loadError}</p>
+                    <p className="text-xs text-gray-500 max-w-md mx-auto">
+                      Revise a configuração da chave na área de Administração → Configurações → Mapas. Certifique-se de que a API
+                      Maps JavaScript está habilitada e que o faturamento está ativo.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Map Controls Overlay */}
+                  <div className="absolute top-4 right-4 z-10 space-y-2">
+                    {/* Zoom Controls */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
+                      <button
+                        onClick={handleZoomIn}
+                        className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors border-b border-gray-200"
+                      >
+                        <ZoomIn size={16} />
+                      </button>
+                      <button
+                        onClick={handleZoomOut}
+                        className="block w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
+                      >
+                        <ZoomOut size={16} />
+                      </button>
+                    </div>
+
+                    {/* Map Style Controls */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => handleMapStyleChange('roadmap')}
+                          className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+                            mapStyle === 'roadmap' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          Mapa
+                        </button>
+                        <button
+                          onClick={() => handleMapStyleChange('satellite')}
+                          className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+                            mapStyle === 'satellite' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          Satélite
+                        </button>
+                        <button
+                          onClick={() => handleMapStyleChange('terrain')}
+                          className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+                            mapStyle === 'terrain' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          Terreno
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Layer Controls */}
+                    <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
+                      <button
+                        onClick={toggleTraffic}
+                        className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
+                          showTraffic ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        Tráfego
+                      </button>
+                    </div>
+
+                    {/* Reset View */}
                     <button
-                      onClick={() => handleMapStyleChange('roadmap')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'roadmap' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
+                      onClick={handleResetView}
+                      className="bg-white rounded-lg shadow-lg border border-gray-200 w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
+                      title="Resetar visualização"
                     >
-                      Mapa
-                    </button>
-                    <button
-                      onClick={() => handleMapStyleChange('satellite')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'satellite' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Satélite
-                    </button>
-                    <button
-                      onClick={() => handleMapStyleChange('terrain')}
-                      className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                        mapStyle === 'terrain' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Terreno
+                      <RotateCcw size={16} />
                     </button>
                   </div>
-                </div>
 
-                {/* Layer Controls */}
-                <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-2">
-                  <button
-                    onClick={toggleTraffic}
-                    className={`w-full px-3 py-2 text-xs font-medium rounded transition-colors ${
-                      showTraffic ? 'bg-orange-100 text-orange-700' : 'text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    Tráfego
-                  </button>
-                </div>
-
-                {/* Reset View */}
-                <button
-                  onClick={handleResetView}
-                  className="bg-white rounded-lg shadow-lg border border-gray-200 w-10 h-10 flex items-center justify-center hover:bg-gray-50 transition-colors"
-                  title="Resetar visualização"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              </div>
-
-              {/* Legend */}
-              <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3">
-                <h4 className="text-sm font-medium text-gray-900 mb-2">Legenda</h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <Navigation size={12} className="text-green-500" />
-                    <span>Em movimento</span>
+                  {/* Legend */}
+                  <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3">
+                    <h4 className="text-sm font-medium text-gray-900 mb-2">Legenda</h4>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Navigation size={12} className="text-green-500" />
+                        <span>Em movimento</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Square size={12} className="text-yellow-500" />
+                        <span>Parado (ligado)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Circle size={12} className="text-blue-500" />
+                        <span>Parado (desligado)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Circle size={12} className="text-gray-400" />
+                        <span>Offline</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Square size={12} className="text-yellow-500" />
-                    <span>Parado (ligado)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Circle size={12} className="text-blue-500" />
-                    <span>Parado (desligado)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Circle size={12} className="text-gray-400" />
-                    <span>Offline</span>
-                  </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           </div>
         </div>
