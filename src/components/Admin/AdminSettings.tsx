@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { Loader } from '@googlemaps/js-api-loader';
 
+const TEST_LOADER_ID = 'google-maps-admin-test-script';
+
 export const AdminSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('maps');
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState('AIzaSyDpQqXey9TOX1qbuScxWuvW9Hg057DQaas');
@@ -36,11 +38,21 @@ export const AdminSettings: React.FC = () => {
     setIsTestingApi(true);
     setApiTestResult(null);
 
+    if (typeof window === 'undefined') {
+      setApiTestResult({ success: false, message: 'Este teste só pode ser executado no navegador.' });
+      setIsTestingApi(false);
+      return false;
+    }
+
+    const previousGoogle = (window as any).google;
+    document.getElementById(TEST_LOADER_ID)?.remove();
+
     try {
       const loader = new Loader({
         apiKey: testApiKey,
         version: 'weekly',
-        libraries: ['maps', 'marker']
+        libraries: ['maps', 'marker'],
+        id: TEST_LOADER_ID
       });
 
       await loader.load();
@@ -68,6 +80,12 @@ export const AdminSettings: React.FC = () => {
       setApiTestResult({ success: false, message: errorMessage });
       return false;
     } finally {
+      document.getElementById(TEST_LOADER_ID)?.remove();
+      if (typeof previousGoogle !== 'undefined') {
+        (window as any).google = previousGoogle;
+      } else {
+        delete (window as any).google;
+      }
       setIsTestingApi(false);
     }
   };

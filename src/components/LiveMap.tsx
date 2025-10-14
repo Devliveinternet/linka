@@ -134,6 +134,7 @@ function parseGeofenceArea(area: string):
 export default function LiveMap() {
   const mapDiv = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map>();
+  const loaderRef = useRef<Loader | null>(null);
   const markersRef = useRef<Map<number, google.maps.Marker>>(new Map());
   const polylinesRef = useRef<Map<number, google.maps.Polyline>>(new Map());
   const geofenceOverlaysRef = useRef<Map<number, google.maps.Circle | google.maps.Polygon>>(new Map());
@@ -143,6 +144,7 @@ export default function LiveMap() {
   const clustererRef = useRef<MarkerClusterer | null>(null);
 
   const [ready, setReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   const [nameMap, setNameMap] = useState<Record<number, string>>({});
   const [geofences, setGeofences] = useState<Geofence[]>([]);
   const [showGeofences, setShowGeofences] = useState(true);
@@ -227,13 +229,80 @@ export default function LiveMap() {
 
   // -------- bootstrap --------
   useEffect(() => {
-    const loader = new Loader({
-      apiKey: import.meta.env.VITE_GOOGLE_MAPS_KEY as string,
-      version: 'weekly',
-      libraries: ['maps', 'marker'],
-    });
-    loader.load().then(() => {
-      if (!mapDiv.current) return;
+    let cancelled = false;
+
+    const ensureGoogleMapsLoaded = async () => {
+      if (typeof window === 'undefined') return;
+
+      const storedKey = window.localStorage?.getItem('googleMapsApiKey')?.trim() ?? '';
+      const envKey = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined)?.trim() ?? '';
+      let apiKey = storedKey || envKey;
+
+      const existingScript = document.getElementById('__googleMapsScriptId') as HTMLScriptElement | null;
+      if (existingScript) {
+        let existingKey = '';
+        if (existingScript.src) {
+          try {
+            const parsed = new URL(existingScript.src);
+            existingKey = parsed.searchParams.get('key')?.trim() ?? '';
+          } catch (error) {
+            console.warn('Não foi possível analisar a URL do script do Google Maps existente.', error);
+          }
+        }
+
+        if (existingKey && !apiKey) {
+          apiKey = existingKey;
+        } else if (!existingKey && apiKey) {
+          existingScript.remove();
+          if ((window as any).google) {
+            delete (window as any).google;
+          }
+        } else if (existingKey && apiKey && existingKey !== apiKey) {
+          existingScript.remove();
+          if ((window as any).google) {
+            delete (window as any).google;
+          }
+        }
+      }
+
+      if (!apiKey) {
+        if (!cancelled) {
+          setMapError('Configure a chave da API do Google Maps para visualizar o mapa.');
+        }
+        return;
+      }
+
+      if (!loaderRef.current) {
+        loaderRef.current = new Loader({
+          apiKey,
+          version: 'weekly',
+          libraries: ['maps', 'marker'],
+          id: '__googleMapsScriptId',
+        });
+      }
+
+      try {
+        await loaderRef.current.load();
+      } catch (error) {
+        console.error('Erro ao carregar Google Maps:', error);
+        if (!cancelled) {
+          let friendly = 'Verifique se a chave da API está correta e com faturamento habilitado.';
+          if (error instanceof Error) {
+            if (error.message.includes('BillingNotEnabledMapError')) {
+              friendly = 'Habilite o faturamento do projeto no Google Cloud Console para continuar usando o mapa.';
+            } else if (error.message.includes('InvalidKeyMapError')) {
+              friendly = 'A chave informada é inválida. Revise a configuração e tente novamente.';
+            } else if (error.message.includes('RefererNotAllowedMapError')) {
+              friendly = 'O domínio atual não está autorizado a usar essa chave. Ajuste as restrições no Google Cloud.';
+            }
+          }
+          setMapError(`Não foi possível carregar o Google Maps. ${friendly}`);
+        }
+        return;
+      }
+
+      if (cancelled || !mapDiv.current) return;
+
       mapRef.current = new google.maps.Map(mapDiv.current, {
         center: { lat: -15.7797, lng: -47.9297 },
         zoom: 5,
@@ -242,14 +311,22 @@ export default function LiveMap() {
       });
       infoRef.current = new google.maps.InfoWindow();
 
-      // inicia clusterer
       clustererRef.current = new MarkerClusterer({
         map: mapRef.current,
         markers: [],
       });
 
-      setReady(true);
-    });
+      if (!cancelled) {
+        setMapError(null);
+        setReady(true);
+      }
+    };
+
+    ensureGoogleMapsLoaded();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -803,6 +880,31 @@ export default function LiveMap() {
         </div>
 
         <div ref={mapDiv} style={{ width: '100%', height: '100%' }} />
+        {mapError && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 24,
+              background: 'rgba(15, 23, 42, 0.72)',
+              color: 'white',
+              textAlign: 'center',
+              fontFamily: 'system-ui',
+              zIndex: 4,
+            }}
+          >
+            <div style={{ maxWidth: 420, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <strong style={{ fontSize: 18 }}>Não foi possível carregar o mapa</strong>
+              <span style={{ fontSize: 14, lineHeight: 1.5 }}>{mapError}</span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>
+                Verifique as configurações da chave do Google Maps em Configurações → Integrações e tente novamente.
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
