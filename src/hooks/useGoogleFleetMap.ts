@@ -50,6 +50,7 @@ interface UseGoogleFleetMapResult {
   getStatusIcon: (device: Device) => LucideIcon;
   getStatusLabel: (device: Device) => string;
   focusOnDevice: (deviceId: string) => void;
+  loadError: string | null;
 }
 
 export const useGoogleFleetMap = ({
@@ -64,6 +65,7 @@ export const useGoogleFleetMap = ({
   const [showOfflineDevices, setShowOfflineDevices] = useState(true);
   const [showGeofences, setShowGeofences] = useState(true);
   const [showTraffic, setShowTraffic] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const markersRef = useRef<google.maps.Marker[]>([]);
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
@@ -167,8 +169,44 @@ export const useGoogleFleetMap = ({
     [devices, selectedDevice, showOfflineDevices, vehicles]
   );
 
+  const resolveGoogleMapsErrorMessage = useCallback((error: unknown) => {
+    const rawMessage =
+      typeof error === 'string'
+        ? error
+        : error instanceof Error
+        ? error.message
+        : '';
+
+    if (rawMessage.includes('BillingNotEnabledMapError')) {
+      return 'O faturamento da API do Google Maps não está habilitado. Acesse o Google Cloud Console e ative o faturamento para o projeto associado à chave utilizada.';
+    }
+
+    if (rawMessage.includes('InvalidKeyMapError')) {
+      return 'A chave informada para o Google Maps é inválida. Verifique se foi copiada corretamente e se não possui restrições incompatíveis.';
+    }
+
+    if (rawMessage.includes('RefererNotAllowedMapError')) {
+      return 'O domínio atual não está autorizado a usar esta chave da API do Google Maps. Ajuste as restrições de referer no Google Cloud Console.';
+    }
+
+    if (rawMessage.includes('RequestDeniedMapError')) {
+      return 'A solicitação ao Google Maps foi negada. Confirme se a API Maps JavaScript está habilitada e se a chave possui permissões suficientes.';
+    }
+
+    if (rawMessage.includes('ApiNotActivatedMapError')) {
+      return 'A API Maps JavaScript não está habilitada no projeto. Ative-a no Google Cloud Console antes de continuar.';
+    }
+
+    return rawMessage || 'Não foi possível carregar o Google Maps. Verifique a configuração da chave da API.';
+  }, []);
+
   const initializeMap = useCallback(async () => {
-    if (!apiKey || !mapRef.current) return;
+    if (!apiKey || !mapRef.current) {
+      if (!apiKey) {
+        setLoadError('Nenhuma chave da API do Google Maps foi configurada. Salve uma chave válida para visualizar o mapa.');
+      }
+      return;
+    }
 
     if (!loaderRef.current) {
       loaderRef.current = new Loader({
@@ -179,6 +217,7 @@ export const useGoogleFleetMap = ({
     }
 
     try {
+      setLoadError(null);
       await loaderRef.current.load();
 
       if (!mapRef.current) return;
@@ -204,8 +243,13 @@ export const useGoogleFleetMap = ({
       addDeviceMarkers(mapInstance);
     } catch (error) {
       console.error('Error loading Google Maps API', error);
+      markersRef.current.forEach(marker => marker.setMap(null));
+      markersRef.current = [];
+      setMap(null);
+      setLoadError(resolveGoogleMapsErrorMessage(error));
+      loaderRef.current = undefined;
     }
-  }, [apiKey, addDeviceMarkers]);
+  }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -213,10 +257,10 @@ export const useGoogleFleetMap = ({
   }, [apiKey, initializeMap]);
 
   useEffect(() => {
-    if (map) {
+    if (map && !loadError) {
       addDeviceMarkers(map);
     }
-  }, [map, addDeviceMarkers]);
+  }, [map, addDeviceMarkers, loadError]);
 
   const handleZoomIn = useCallback(() => {
     if (map) {
@@ -355,7 +399,8 @@ export const useGoogleFleetMap = ({
     getStatusColor,
     getStatusIcon,
     getStatusLabel,
-    focusOnDevice
+    focusOnDevice,
+    loadError
   };
 };
 
