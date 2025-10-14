@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  Save, 
-  Key, 
-  Map, 
-  AlertCircle, 
-  CheckCircle, 
+import {
+  Save,
+  Key,
+  Map,
+  AlertCircle,
+  CheckCircle,
   Settings as SettingsIcon,
   Globe,
   Database,
@@ -12,8 +12,7 @@ import {
   Bell
 } from 'lucide-react';
 import { Loader } from '@googlemaps/js-api-loader';
-
-const TEST_LOADER_ID = 'google-maps-admin-test-script';
+import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../../utils/googleMaps';
 
 export const AdminSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('maps');
@@ -45,14 +44,15 @@ export const AdminSettings: React.FC = () => {
     }
 
     const previousGoogle = (window as any).google;
-    document.getElementById(TEST_LOADER_ID)?.remove();
+    const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID) as HTMLScriptElement | null;
+    existingScript?.remove();
 
     try {
       const loader = new Loader({
         apiKey: testApiKey,
         version: 'weekly',
-        libraries: ['maps', 'marker'],
-        id: TEST_LOADER_ID
+        libraries: [...GOOGLE_MAPS_LIBRARIES],
+        id: GOOGLE_MAPS_SCRIPT_ID
       });
 
       await loader.load();
@@ -80,7 +80,11 @@ export const AdminSettings: React.FC = () => {
       setApiTestResult({ success: false, message: errorMessage });
       return false;
     } finally {
-      document.getElementById(TEST_LOADER_ID)?.remove();
+      const testScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID);
+      testScript?.remove();
+      if (existingScript) {
+        document.head.appendChild(existingScript);
+      }
       if (typeof previousGoogle !== 'undefined') {
         (window as any).google = previousGoogle;
       } else {

@@ -3,6 +3,7 @@ import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from
 import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { useAuth } from '../context/AuthContext';
+import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../utils/googleMaps';
 
 type Position = {
   id?: number;
@@ -238,7 +239,7 @@ export default function LiveMap() {
       const envKey = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined)?.trim() ?? '';
       let apiKey = storedKey || envKey;
 
-      const existingScript = document.getElementById('__googleMapsScriptId') as HTMLScriptElement | null;
+      const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID) as HTMLScriptElement | null;
       if (existingScript) {
         let existingKey = '';
         if (existingScript.src) {
@@ -276,8 +277,8 @@ export default function LiveMap() {
         loaderRef.current = new Loader({
           apiKey,
           version: 'weekly',
-          libraries: ['maps', 'marker'],
-          id: '__googleMapsScriptId',
+          libraries: [...GOOGLE_MAPS_LIBRARIES],
+          id: GOOGLE_MAPS_SCRIPT_ID,
         });
       }
 
