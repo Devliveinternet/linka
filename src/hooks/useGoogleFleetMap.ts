@@ -68,13 +68,91 @@ export const useGoogleFleetMap = ({
   const [showTraffic, setShowTraffic] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const markersRef = useRef<google.maps.Marker[]>([]);
+  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
   const loaderRef = useRef<Loader>();
 
+  const createVehicleMarkerContent = useCallback((icon: ReturnType<typeof createVehicleIcon>) => {
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.alignItems = 'center';
+    wrapper.style.transform = 'translate(-50%, -100%)';
+    wrapper.style.filter = 'drop-shadow(0 12px 18px rgba(15,23,42,0.35))';
+
+    const body = document.createElement('div');
+    body.style.background = 'white';
+    body.style.borderRadius = '14px';
+    body.style.padding = icon.url ? '6px' : '8px';
+    body.style.display = 'flex';
+    body.style.alignItems = 'center';
+    body.style.justifyContent = 'center';
+    body.style.boxShadow = '0 8px 16px rgba(15, 23, 42, 0.35)';
+    body.style.pointerEvents = 'auto';
+    body.dataset.markerPart = 'body';
+
+    if (icon.url) {
+      const size = icon.scaledSize?.width ?? icon.size?.width ?? 36;
+      const img = document.createElement('img');
+      img.src = icon.url;
+      img.alt = '';
+      img.style.width = `${size}px`;
+      img.style.height = `${size}px`;
+      img.style.objectFit = 'cover';
+      img.style.borderRadius = '50%';
+      body.appendChild(img);
+    } else if (icon.path) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      const scale = icon.scale ?? 1;
+      const width = 24 * scale;
+      const height = 24 * scale;
+      svg.setAttribute('width', `${width}`);
+      svg.setAttribute('height', `${height}`);
+      svg.style.transform = `rotate(${icon.rotation ?? 0}deg)`;
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', icon.path);
+      if (icon.fillColor) path.setAttribute('fill', icon.fillColor);
+      if (icon.fillOpacity != null) path.setAttribute('fill-opacity', String(icon.fillOpacity));
+      if (icon.strokeColor) path.setAttribute('stroke', icon.strokeColor);
+      if (icon.strokeOpacity != null) path.setAttribute('stroke-opacity', String(icon.strokeOpacity));
+      if (icon.strokeWeight != null) path.setAttribute('stroke-width', String(icon.strokeWeight));
+      svg.appendChild(path);
+      body.appendChild(svg);
+    }
+
+    const pointer = document.createElement('div');
+    pointer.style.width = '0';
+    pointer.style.height = '0';
+    pointer.style.borderLeft = '8px solid transparent';
+    pointer.style.borderRight = '8px solid transparent';
+    pointer.style.borderTop = '12px solid rgba(15,23,42,0.75)';
+    pointer.style.marginTop = '2px';
+    pointer.style.pointerEvents = 'none';
+    pointer.dataset.markerPart = 'pointer';
+
+    const shadow = document.createElement('div');
+    shadow.style.width = '18px';
+    shadow.style.height = '6px';
+    shadow.style.borderRadius = '50%';
+    shadow.style.background = 'rgba(15,23,42,0.35)';
+    shadow.style.filter = 'blur(4px)';
+    shadow.style.marginTop = '4px';
+    shadow.style.pointerEvents = 'none';
+    shadow.dataset.markerPart = 'shadow';
+
+    wrapper.appendChild(body);
+    wrapper.appendChild(pointer);
+    wrapper.appendChild(shadow);
+
+    return wrapper;
+  }, []);
+
   const addDeviceMarkers = useCallback(
     (mapInstance: google.maps.Map) => {
-      markersRef.current.forEach(marker => marker.setMap(null));
+      markersRef.current.forEach(marker => (marker.map = null));
       markersRef.current = [];
 
       const devicesToRender = showOfflineDevices
@@ -105,11 +183,11 @@ export const useGoogleFleetMap = ({
           );
         };
 
-        const marker = new google.maps.Marker({
+        const marker = new google.maps.marker.AdvancedMarkerElement({
           position,
           map: mapInstance,
-          icon: getMarkerIcon(),
-          title: `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`
+          title: `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`,
+          content: createVehicleMarkerContent(getMarkerIcon()),
         });
 
         const infoWindow = new google.maps.InfoWindow({
@@ -160,14 +238,14 @@ export const useGoogleFleetMap = ({
             }
           });
 
-          infoWindow.open(mapInstance, marker);
+          infoWindow.open({ map: mapInstance, anchor: marker });
           (marker as any).infoWindow = infoWindow;
         });
 
         markersRef.current.push(marker);
       });
     },
-    [devices, selectedDevice, showOfflineDevices, vehicles]
+    [createVehicleMarkerContent, devices, selectedDevice, showOfflineDevices, vehicles]
   );
 
   const resolveGoogleMapsErrorMessage = useCallback((error: unknown) => {
