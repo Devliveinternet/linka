@@ -16,19 +16,19 @@ export interface VehicleIconConfig {
 export const getVehicleIconPath = (vehicleType: string): string => {
   switch (vehicleType) {
     case 'car':
-      return 'M12 2L21 11H16V22H8V11H3L12 2Z';
+      return 'M12 1L22 12H17V23H7V12H2L12 1Z';
 
     case 'truck':
-      return 'M12 2L22 12H18V22H6V12H2L12 2Z';
+      return 'M12 1L24 14H18V23H6V14H0L12 1Z';
 
     case 'motorcycle':
-      return 'M12 2L20 12H16V22H8V12H4L12 2Z';
+      return 'M12 1L21 12H16V23H8V12H3L12 1Z';
 
     case 'machine':
-      return 'M12 2L23 14H18V22H6V14H1L12 2Z';
+      return 'M12 1L26 15H19V23H5V15H-2L12 1Z';
 
     default:
-      return 'M12 2L21 12H16V22H8V12H3L12 2Z';
+      return 'M12 1L22 12H17V23H7V12H2L12 1Z';
   }
 };
 
@@ -70,7 +70,7 @@ export const createVehicleIcon = (
     strokeOpacity: isSelected ? 0.9 : 0.8,
     strokeWeight: 2,
     scale: isSelected ? 1.8 : 1.4,
-    anchor: { x: 12, y: 18 },
+    anchor: { x: 12, y: 20 },
     rotation: heading
   };
 };
