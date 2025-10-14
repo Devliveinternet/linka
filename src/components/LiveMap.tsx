@@ -230,6 +230,7 @@ export default function LiveMap() {
     const loader = new Loader({
       apiKey: import.meta.env.VITE_GOOGLE_MAPS_KEY as string,
       version: 'weekly',
+      libraries: ['maps', 'marker'],
     });
     loader.load().then(() => {
       if (!mapDiv.current) return;
