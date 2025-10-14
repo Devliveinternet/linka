@@ -1,5 +1,5 @@
 import { Loader } from '@googlemaps/js-api-loader';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { useAuth } from '../context/AuthContext';
@@ -39,6 +39,39 @@ const tsOf = (p: Position) =>
 // Se velocidade vier em knots (padrão Traccar), troque 3.6 por 1.852
 const fmtSpeed = (v?: number) => (v != null ? `${(v * 3.6).toFixed(1)} km/h` : '-');
 const fmtTime = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '-');
+
+const timeAgo = (iso?: string) => {
+  if (!iso) return 'Sem dados';
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return fmtTime(iso);
+
+  const diffMs = Date.now() - ts;
+  if (diffMs < 0) return 'agora';
+
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes <= 1) return 'agora';
+  if (minutes < 60) return `há ${minutes} minutos`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours === 1) return 'há 1 hora';
+  if (hours < 24) return `há ${hours} horas`;
+
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'há 1 dia';
+  if (days < 7) return `há ${days} dias`;
+
+  const weeks = Math.round(days / 7);
+  if (weeks === 1) return 'há 1 semana';
+  if (weeks < 5) return `há ${weeks} semanas`;
+
+  const months = Math.round(days / 30);
+  if (months === 1) return 'há 1 mês';
+  if (months < 12) return `há ${months} meses`;
+
+  const years = Math.round(days / 365);
+  if (years <= 1) return 'há 1 ano';
+  return `há ${years} anos`;
+};
 
 // ---------- cores por categoria/atributo ----------
 function geofenceColors(gf: Geofence) {
@@ -113,16 +146,23 @@ export default function LiveMap() {
   const [nameMap, setNameMap] = useState<Record<number, string>>({});
   const [geofences, setGeofences] = useState<Geofence[]>([]);
   const [showGeofences, setShowGeofences] = useState(true);
+  const [deviceSnapshots, setDeviceSnapshots] = useState<Map<number, Position>>(() => new Map());
+  const [isCompact, setIsCompact] = useState(false);
 
   // Busca (UI)
   const [query, setQuery] = useState('');
-  const matches = (() => {
+  const filteredDevices = useMemo(() => {
+    const entries = Object.entries(nameMap).map(([idStr, nm]) => {
+      const id = Number(idStr);
+      return { id, name: nm, snapshot: deviceSnapshots.get(id) };
+    });
+    entries.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
     const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return Object.entries(nameMap)
-      .filter(([, nm]) => nm.toLowerCase().includes(q))
-      .slice(0, 8) as [string, string][];
-  })();
+    if (!q) return entries;
+    return entries.filter((entry) => entry.name.toLowerCase().includes(q));
+  }, [deviceSnapshots, nameMap, query]);
+  const totalRegistered = useMemo(() => Object.keys(nameMap).length, [nameMap]);
 
   // ---- toasts simples ----
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
@@ -209,6 +249,25 @@ export default function LiveMap() {
 
       setReady(true);
     });
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1024px)');
+    const update = (event: MediaQueryList | MediaQueryListEvent) => {
+      setIsCompact(event.matches);
+    };
+
+    update(media);
+
+    if (typeof media.addEventListener === 'function') {
+      const listener = (event: MediaQueryListEvent) => update(event);
+      media.addEventListener('change', listener);
+      return () => media.removeEventListener('change', listener);
+    }
+
+    const legacyListener = (event: MediaQueryListEvent) => update(event);
+    media.addListener(legacyListener);
+    return () => media.removeListener(legacyListener);
   }, []);
 
   // snapshot inicial: nomes + últimas posições + geofences
@@ -315,16 +374,33 @@ export default function LiveMap() {
   }
 
   function applyBatch(batch: Position[]) {
+    const updates = new Map<number, Position>();
     for (const p of batch) {
       const ts = tsOf(p);
       const lastTs = lastSeenTsRef.current.get(p.deviceId) ?? -Infinity;
       if (ts < lastTs) continue; // chegou atrasada → ignora
       lastSeenTsRef.current.set(p.deviceId, ts);
       lastPosRef.current.set(p.deviceId, p); // guarda última posição para busca
+      updates.set(p.deviceId, p);
       upsertMarker(p);
     }
     // reaplica o clustering após o lote
     clustererRef.current?.repaint();
+
+    if (updates.size) {
+      setDeviceSnapshots((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        updates.forEach((pos, id) => {
+          const prevPos = prev.get(id);
+          if (!prevPos || tsOf(pos) !== tsOf(prevPos)) {
+            next.set(id, pos);
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    }
   }
 
   function upsertMarker(p: Position) {
@@ -492,83 +568,241 @@ export default function LiveMap() {
     openInfo(marker, pos);
   }
 
+  const layoutStyle: CSSProperties = {
+    display: 'flex',
+    flexDirection: isCompact ? 'column' : 'row',
+    alignItems: 'stretch',
+    width: '100%',
+    gap: isCompact ? 12 : 16,
+    height: isCompact ? 'auto' : '80vh',
+  };
+
+  const mapWrapperStyle: CSSProperties = {
+    flex: 1,
+    position: 'relative',
+    borderRadius: 16,
+    overflow: 'hidden',
+    minHeight: isCompact ? '60vh' : '100%',
+    height: isCompact ? '60vh' : '100%',
+    boxShadow: '0 30px 60px -40px rgba(15,23,42,0.55)',
+    background: '#cbd5f5',
+  };
+
+  const panelStyle: CSSProperties = {
+    width: isCompact ? '100%' : 360,
+    maxWidth: isCompact ? '100%' : 380,
+    background: 'linear-gradient(165deg, #ffffff 0%, #f8fafc 40%, #eef2ff 100%)',
+    border: '1px solid rgba(148,163,184,0.35)',
+    borderRadius: 20,
+    boxShadow: '0 35px 65px -45px rgba(15,23,42,0.65)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    fontFamily: 'system-ui',
+    color: '#0f172a',
+  };
+
   return (
-    <div style={{ width: '100%', height: '80vh', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
-      {/* Toggle Geofences */}
-      <div style={{
-        position: 'absolute', zIndex: 3, top: 12, left: 12,
-        background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px',
-        fontFamily: 'system-ui', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8
-      }}>
-        <input
-          id="gf-toggle"
-          type="checkbox"
-          checked={showGeofences}
-          onChange={(e) => setShowGeofences(e.target.checked)}
-        />
-        <label htmlFor="gf-toggle">Mostrar geofences</label>
-      </div>
+    <div style={layoutStyle}>
+      <aside style={panelStyle}>
+        <div style={{
+          padding: '22px 24px',
+          background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #312e81 100%)',
+          color: 'white',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+        }}>
+          <span style={{ fontSize: 14, letterSpacing: 1.2, textTransform: 'uppercase', opacity: 0.75 }}>frota ao vivo</span>
+          <span style={{ fontSize: 22, fontWeight: 700 }}>Dispositivos cadastrados</span>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>
+            {filteredDevices.length} de {totalRegistered} dispositivos exibidos
+          </span>
+        </div>
 
-      {/* Busca por device */}
-      <div style={{
-        position: 'absolute', zIndex: 3, top: 12, left: '50%', transform: 'translateX(-50%)',
-        background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: 8,
-        fontFamily: 'system-ui', fontSize: 13, minWidth: 280, maxWidth: 360,
-      }}>
-        <input
-          type="text"
-          placeholder="Buscar dispositivo..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 8 }}
-        />
-        {matches.length > 0 && (
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label htmlFor="device-search" style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>Buscar dispositivo</label>
           <div style={{
-            marginTop: 6, borderTop: '1px solid #eee', paddingTop: 6,
-            maxHeight: 220, overflowY: 'auto'
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            borderRadius: 14,
+            border: '1px solid rgba(148,163,184,0.4)',
+            background: 'rgba(255,255,255,0.92)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4)',
           }}>
-            {matches.map(([idStr, nm]) => {
-              const id = Number(idStr);
+            <span style={{ paddingLeft: 14, paddingRight: 6, color: '#64748b' }}>🔍</span>
+            <input
+              id="device-search"
+              type="text"
+              placeholder="Nome, placa ou apelido"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '12px 16px 12px 6px',
+                border: 'none',
+                background: 'transparent',
+                outline: 'none',
+                fontSize: 14,
+                color: '#0f172a',
+              }}
+            />
+          </div>
+        </div>
+
+        <div style={{ flex: 1, padding: '0 22px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {filteredDevices.length === 0 ? (
+            <div style={{
+              background: 'rgba(255,255,255,0.75)',
+              border: '1px dashed rgba(148,163,184,0.6)',
+              borderRadius: 16,
+              padding: '28px 22px',
+              textAlign: 'center',
+              fontSize: 14,
+              color: '#475569',
+            }}>
+              Nenhum dispositivo encontrado para esta busca.
+            </div>
+          ) : (
+            filteredDevices.map(({ id, name, snapshot }) => {
+              const lastTime = snapshot?.fixTime || snapshot?.deviceTime || snapshot?.serverTime;
+              const statusMoving = (snapshot?.speed ?? 0) > 0.5;
+              const statusLabel = snapshot ? (statusMoving ? 'Em movimento' : 'Parado') : 'Sem posição';
+              const statusColor = snapshot ? (statusMoving ? '#2563eb' : '#10b981') : '#9ca3af';
+              const coordsLabel = snapshot ? `${snapshot.latitude.toFixed(4)}, ${snapshot.longitude.toFixed(4)}` : '—';
+              const speedLabel = fmtSpeed(snapshot?.speed);
+              const updatedLabel = snapshot ? timeAgo(lastTime) : 'Sem atualização';
+              const updatedTitle = lastTime ? fmtTime(lastTime) : 'Sem registro';
+
               return (
-                <div key={id} style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '6px 6px', borderRadius: 6, cursor: 'pointer'
-                }}
-                onClick={() => flyToDevice(id)}
-                onKeyDown={(e) => { if (e.key === 'Enter') flyToDevice(id); }}
-                tabIndex={0}
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => flyToDevice(id)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    border: '1px solid rgba(148,163,184,0.35)',
+                    borderRadius: 16,
+                    background: 'linear-gradient(140deg, rgba(255,255,255,0.95) 0%, rgba(226,232,240,0.9) 100%)',
+                    boxShadow: '0 18px 40px -30px rgba(15,23,42,0.7)',
+                    padding: '16px 18px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  }}
+                  onMouseEnter={(event) => {
+                    event.currentTarget.style.transform = 'translateY(-2px)';
+                    event.currentTarget.style.boxShadow = '0 24px 45px -32px rgba(15,23,42,0.75)';
+                  }}
+                  onMouseLeave={(event) => {
+                    event.currentTarget.style.transform = 'translateY(0)';
+                    event.currentTarget.style.boxShadow = '0 18px 40px -30px rgba(15,23,42,0.7)';
+                  }}
                 >
-                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
-                    {nm}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <span style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: '999px',
+                        background: statusColor,
+                        boxShadow: `0 0 0 6px ${statusColor}1F`,
+                        flexShrink: 0,
+                      }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {name}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#475569', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span>{statusLabel}</span>
+                          <span style={{ opacity: 0.4 }}>•</span>
+                          <span title={`ID ${id}`}>ID {id}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600 }}>ver no mapa ↗</span>
                   </div>
-                  <div style={{
-                    fontSize: 12, background: '#111827', color: 'white',
-                    padding: '4px 8px', borderRadius: 999
-                  }}>abrir</div>
-                </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#1e293b',
+                      background: 'rgba(59,130,246,0.12)',
+                      borderRadius: 999,
+                      padding: '6px 10px',
+                    }}>
+                      Velocidade {speedLabel}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 500,
+                        color: '#475569',
+                        background: 'rgba(15,23,42,0.05)',
+                        borderRadius: 999,
+                        padding: '6px 10px',
+                      }}
+                      title={updatedTitle}
+                    >
+                      Atualizado {updatedLabel}
+                    </span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 500,
+                      color: '#1e293b',
+                      background: 'rgba(16,185,129,0.12)',
+                      borderRadius: 999,
+                      padding: '6px 10px',
+                    }}>
+                      Coordenadas {coordsLabel}
+                    </span>
+                  </div>
+                </button>
               );
-            })}
-          </div>
-        )}
-      </div>
+            })
+          )}
+        </div>
+      </aside>
 
-      {/* Toasts (eventos) */}
-      <div style={{
-        position: 'absolute', zIndex: 3, top: 12, right: 12,
-        display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 360
-      }}>
-        {toasts.map(t => (
-          <div key={t.id} style={{
-            background: 'rgba(17,24,39,0.95)', color: 'white',
-            borderRadius: 10, padding: '10px 12px', fontFamily: 'system-ui', fontSize: 13,
-            boxShadow: '0 6px 20px rgba(0,0,0,0.2)'
-          }}>
-            {t.text}
-          </div>
-        ))}
-      </div>
+      <div style={mapWrapperStyle}>
+        {/* Toggle Geofences */}
+        <div style={{
+          position: 'absolute', zIndex: 3, top: 12, left: 12,
+          background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px',
+          fontFamily: 'system-ui', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8
+        }}>
+          <input
+            id="gf-toggle"
+            type="checkbox"
+            checked={showGeofences}
+            onChange={(e) => setShowGeofences(e.target.checked)}
+          />
+          <label htmlFor="gf-toggle">Mostrar geofences</label>
+        </div>
 
-      <div ref={mapDiv} style={{ width: '100%', height: '100%' }} />
+        {/* Toasts (eventos) */}
+        <div style={{
+          position: 'absolute', zIndex: 3, top: 12, right: 12,
+          display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 320
+        }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              background: 'rgba(17,24,39,0.95)', color: 'white',
+              borderRadius: 10, padding: '10px 12px', fontFamily: 'system-ui', fontSize: 13,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.2)'
+            }}>
+              {t.text}
+            </div>
+          ))}
+        </div>
+
+        <div ref={mapDiv} style={{ width: '100%', height: '100%' }} />
+      </div>
     </div>
   );
 }
