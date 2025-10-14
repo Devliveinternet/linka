@@ -92,7 +92,14 @@ export const useGoogleFleetMap = ({
           const isMoving = device.position?.ignition && device.position?.speed > 5;
           const isSelected = selectedDevice === device.id;
 
-          return createVehicleIcon(vehicleType, device.status, isMoving, isSelected, vehiclePhoto);
+          return createVehicleIcon(
+            vehicleType,
+            device.status,
+            isMoving,
+            isSelected,
+            vehiclePhoto,
+            device.position?.heading ?? 0
+          );
         };
 
         const marker = new google.maps.Marker({
