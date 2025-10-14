@@ -140,6 +140,7 @@ export interface MapConfiguration {
 export interface Vehicle {
   id: string;
   tenantId: string;
+  clientId?: string;
   plate: string;
   model: string;
   year: number;
@@ -152,4 +153,9 @@ export interface Vehicle {
   nextMaintenance: number;
   photo?: string; // URL or base64 of vehicle photo
   vehicleType?: 'car' | 'truck' | 'motorcycle' | 'machine';
+  color?: string;
+  chassisNumber?: string;
+  initialOdometer?: number;
+  currentOdometer?: number;
+  trackerId?: string;
 }
