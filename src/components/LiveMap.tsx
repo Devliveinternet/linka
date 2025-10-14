@@ -486,8 +486,8 @@ export default function LiveMap() {
       updates.set(p.deviceId, p);
       upsertMarker(p);
     }
-    // reaplica o clustering após o lote
-    clustererRef.current?.repaint();
+    // reaplica o clustering após o lote com a API atual do MarkerClusterer
+    clustererRef.current?.render();
 
     if (updates.size) {
       setDeviceSnapshots((prev) => {
