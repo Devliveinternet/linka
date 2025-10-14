@@ -143,6 +143,7 @@ export default function LiveMap() {
   const lastPosRef = useRef<Map<number, Position>>(new Map()); // ← última posição por device (para busca)
   const infoRef = useRef<google.maps.InfoWindow>();
   const clustererRef = useRef<MarkerClusterer | null>(null);
+  const devOverlayObserverRef = useRef<MutationObserver | null>(null);
 
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
@@ -317,6 +318,24 @@ export default function LiveMap() {
         markers: [],
       });
 
+      const hideDevelopmentOverlay = () => {
+        document.querySelectorAll<HTMLDivElement>('.gm-style-cc').forEach((node) => {
+          if (node.textContent?.toLowerCase().includes('for development purposes only')) {
+            node.style.display = 'none';
+          }
+        });
+      };
+
+      hideDevelopmentOverlay();
+
+      if (devOverlayObserverRef.current) {
+        devOverlayObserverRef.current.disconnect();
+      }
+
+      devOverlayObserverRef.current = new MutationObserver(hideDevelopmentOverlay);
+      const mapContainer = mapDiv.current.parentElement ?? document.body;
+      devOverlayObserverRef.current.observe(mapContainer, { childList: true, subtree: true });
+
       if (!cancelled) {
         setMapError(null);
         setReady(true);
@@ -327,6 +346,10 @@ export default function LiveMap() {
 
     return () => {
       cancelled = true;
+      if (devOverlayObserverRef.current) {
+        devOverlayObserverRef.current.disconnect();
+        devOverlayObserverRef.current = null;
+      }
     };
   }, []);
 
