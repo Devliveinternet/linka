@@ -41,7 +41,22 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'linka:auth';
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+const rawApiBaseUrl = import.meta.env.VITE_API_URL?.trim();
+const normalizedApiBaseUrl = rawApiBaseUrl ? rawApiBaseUrl.replace(/\/+$/, '') : undefined;
+const runtimeOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+
+export const API_BASE_URL = normalizedApiBaseUrl || runtimeOrigin;
+
+const withLeadingSlash = (path: string) => (path.startsWith('/') ? path : `/${path}`);
+
+export const buildApiUrl = (path: string) => {
+  const normalizedPath = withLeadingSlash(path);
+  if (!API_BASE_URL) {
+    return normalizedPath;
+  }
+  return `${API_BASE_URL}${normalizedPath}`;
+};
 
 async function parseJsonSafe(response: Response) {
   try {
@@ -88,7 +103,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         requestHeaders.set('Content-Type', 'application/json');
       }
 
-      const response = await fetch(`${API_BASE_URL}${path}`, {
+      const response = await fetch(buildApiUrl(path), {
         ...rest,
         headers: requestHeaders,
         body,
@@ -161,7 +176,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      const response = await fetch(buildApiUrl('/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),

@@ -136,13 +136,13 @@ export default function LiveMap() {
   const mapDiv = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map>();
   const loaderRef = useRef<Loader | null>(null);
-  const markersRef = useRef<Map<number, google.maps.Marker>>(new Map());
+  const markersRef = useRef<Map<number, google.maps.marker.AdvancedMarkerElement>>(new Map());
   const polylinesRef = useRef<Map<number, google.maps.Polyline>>(new Map());
   const geofenceOverlaysRef = useRef<Map<number, google.maps.Circle | google.maps.Polygon>>(new Map());
   const lastSeenTsRef = useRef<Map<number, number>>(new Map());
   const lastPosRef = useRef<Map<number, Position>>(new Map()); // ← última posição por device (para busca)
   const infoRef = useRef<google.maps.InfoWindow>();
-  const clustererRef = useRef<MarkerClusterer | null>(null);
+  const clustererRef = useRef<MarkerClusterer<google.maps.marker.AdvancedMarkerElement> | null>(null);
   const devOverlayObserverRef = useRef<MutationObserver | null>(null);
 
   const [ready, setReady] = useState(false);
@@ -505,6 +505,22 @@ export default function LiveMap() {
     }
   }
 
+  function createDeviceMarkerContent(color: string) {
+    const pin = new google.maps.marker.PinElement({
+      background: color,
+      borderColor: '#1f2937',
+      glyphColor: '#ffffff',
+      scale: 1.1,
+    });
+    const el = pin.element;
+    el.dataset.deviceMarker = 'true';
+    return el;
+  }
+
+  function markerColorFor(p: Position) {
+    return (p.speed ?? 0) > 0.5 ? '#2563eb' : '#10b981';
+  }
+
   function upsertMarker(p: Position) {
     if (!mapRef.current) return;
 
@@ -512,39 +528,28 @@ export default function LiveMap() {
     const latLng = new google.maps.LatLng(p.latitude, p.longitude);
     const name = nameMap[p.deviceId] || `Device ${p.deviceId}`;
     const timestamp = p.fixTime || p.deviceTime || p.serverTime;
+    const color = markerColorFor(p);
 
     let m = markers.get(p.deviceId);
     if (!m) {
       // cria sem map (o clusterer gerencia o map)
-      m = new google.maps.Marker({
+      m = new google.maps.marker.AdvancedMarkerElement({
         position: latLng,
         title: `${name}`,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 6,
-          fillOpacity: 1,
-          strokeWeight: 1,
-          strokeOpacity: 0.8,
-          strokeColor: '#1f2937',
-          fillColor: (p.speed ?? 0) > 0.5 ? '#2563eb' : '#10b981', // azul movendo, verde parado
-        } as google.maps.Symbol,
+        content: createDeviceMarkerContent(color),
       });
       m.addListener('click', () => openInfo(m!, p));
       markers.set(p.deviceId, m);
       clustererRef.current?.addMarker(m, true);
     } else {
-      m.setPosition(latLng);
-      const icon = m.getIcon() as google.maps.Symbol | null;
-      if (icon && typeof icon === 'object') {
-        (icon as any).fillColor = (p.speed ?? 0) > 0.5 ? '#2563eb' : '#10b981';
-        m.setIcon(icon);
-      }
+      m.position = latLng;
+      m.content = createDeviceMarkerContent(color);
       google.maps.event.clearListeners(m, 'click');
       m.addListener('click', () => openInfo(m!, p));
     }
 
     // title informativo
-    m.setTitle(`${name} • ${fmtSpeed(p.speed)} • ${fmtTime(timestamp)}`);
+    m.title = `${name} • ${fmtSpeed(p.speed)} • ${fmtTime(timestamp)}`;
   }
 
   async function onRouteAction(deviceId: number, hours = 2) {
@@ -563,7 +568,7 @@ export default function LiveMap() {
     }
   }
 
-  function openInfo(marker: google.maps.Marker, p: Position) {
+  function openInfo(marker: google.maps.marker.AdvancedMarkerElement, p: Position) {
     const name = nameMap[p.deviceId] || `Device ${p.deviceId}`;
     const time = p.fixTime || p.deviceTime || p.serverTime;
 
@@ -653,8 +658,10 @@ export default function LiveMap() {
     if (!all.length) return;
     const bounds = new google.maps.LatLngBounds();
     for (const m of all) {
-      const pos = m.getPosition();
-      if (pos) bounds.extend(pos);
+      const pos = m.position;
+      if (!pos) continue;
+      const latLng = pos instanceof google.maps.LatLng ? pos : new google.maps.LatLng(pos);
+      bounds.extend(latLng);
     }
     mapRef.current.fitBounds(bounds);
   }
@@ -663,11 +670,14 @@ export default function LiveMap() {
   function flyToDevice(deviceId: number) {
     if (!mapRef.current) return;
     const marker = markersRef.current.get(deviceId);
-    const pos = lastPosRef.current.get(deviceId);
-    if (!marker || !pos) return;
-    mapRef.current.panTo(marker.getPosition()!);
+    const snapshot = lastPosRef.current.get(deviceId);
+    if (!marker || !snapshot) return;
+    const markerPos = marker.position;
+    if (!markerPos) return;
+    const latLng = markerPos instanceof google.maps.LatLng ? markerPos : new google.maps.LatLng(markerPos);
+    mapRef.current.panTo(latLng);
     mapRef.current.setZoom(Math.max(mapRef.current.getZoom() ?? 5, 15));
-    openInfo(marker, pos);
+    openInfo(marker, snapshot);
   }
 
   const layoutStyle: CSSProperties = {
