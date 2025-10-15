@@ -47,6 +47,10 @@ export const AdminSettings: React.FC = () => {
     const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID) as HTMLScriptElement | null;
     existingScript?.remove();
 
+    const loaderSingleton = Loader as unknown as { instance?: Loader };
+    const previousLoaderInstance = loaderSingleton.instance;
+    loaderSingleton.instance = undefined;
+
     try {
       const loader = new Loader({
         apiKey: testApiKey,
@@ -82,6 +86,7 @@ export const AdminSettings: React.FC = () => {
     } finally {
       const testScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID);
       testScript?.remove();
+      loaderSingleton.instance = previousLoaderInstance;
       if (existingScript) {
         document.head.appendChild(existingScript);
       }
