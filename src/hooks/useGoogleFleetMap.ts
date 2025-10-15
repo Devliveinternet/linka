@@ -15,13 +15,18 @@ import {
   getVehiclePhotoFromDevice,
   getVehicleTypeFromDevice
 } from '../utils/vehicleIcons';
-import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID, resetGoogleMapsLoaderInstance } from '../utils/googleMaps';
+import {
+  GOOGLE_MAPS_LIBRARIES,
+  GOOGLE_MAPS_SCRIPT_ID,
+  resetGoogleMapsLoaderInstance
+} from '../utils/googleMaps';
 import { Circle, Navigation, Square, type LucideIcon } from 'lucide-react';
 
 type MapStyle = 'roadmap' | 'satellite' | 'terrain';
 
 interface UseGoogleFleetMapParams {
   apiKey: string;
+  mapId?: string;
   devices: Device[];
   vehicles?: Vehicle[];
 }
@@ -56,6 +61,7 @@ interface UseGoogleFleetMapResult {
 
 export const useGoogleFleetMap = ({
   apiKey,
+  mapId,
   devices,
   vehicles = []
 }: UseGoogleFleetMapParams): UseGoogleFleetMapResult => {
@@ -72,6 +78,8 @@ export const useGoogleFleetMap = ({
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
   const loaderRef = useRef<Loader>();
   const lastLoadedApiKeyRef = useRef<string>();
+
+  const normalizedMapId = mapId?.trim();
 
   const createVehicleMarkerContent = useCallback((icon: ReturnType<typeof createVehicleIcon>) => {
     const wrapper = document.createElement('div');
@@ -334,7 +342,8 @@ export const useGoogleFleetMap = ({
         mapTypeControl: false,
         streetViewControl: false,
         fullscreenControl: false,
-        zoomControl: false
+        zoomControl: false,
+        ...(normalizedMapId ? { mapId: normalizedMapId } : {})
       });
 
       setMap(mapInstance);
@@ -349,12 +358,20 @@ export const useGoogleFleetMap = ({
       lastLoadedApiKeyRef.current = undefined;
       resetGoogleMapsLoaderInstance();
     }
-  }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage]);
+  }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage, normalizedMapId]);
 
   useEffect(() => {
     if (!apiKey) return;
     initializeMap();
   }, [apiKey, initializeMap]);
+
+  useEffect(() => {
+    if (!map || normalizedMapId === undefined) {
+      return;
+    }
+
+    map.setOptions({ mapId: normalizedMapId || undefined });
+  }, [map, normalizedMapId]);
 
   useEffect(() => {
     if (map && !loadError) {

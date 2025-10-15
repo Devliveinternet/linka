@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Save,
   Key,
@@ -12,14 +12,35 @@ import {
   Bell
 } from 'lucide-react';
 import { Loader } from '@googlemaps/js-api-loader';
-import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../../utils/googleMaps';
+import {
+  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
+  GOOGLE_MAPS_LIBRARIES,
+  GOOGLE_MAPS_MAP_ID_STORAGE_KEY,
+  GOOGLE_MAPS_SCRIPT_ID
+} from '../../utils/googleMaps';
 
 export const AdminSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('maps');
-  const [googleMapsApiKey, setGoogleMapsApiKey] = useState('AIzaSyDpQqXey9TOX1qbuScxWuvW9Hg057DQaas');
-  const [tempApiKey, setTempApiKey] = useState('AIzaSyDpQqXey9TOX1qbuScxWuvW9Hg057DQaas');
+  const [googleMapsApiKey, setGoogleMapsApiKey] = useState('');
+  const [tempApiKey, setTempApiKey] = useState('');
+  const [googleMapsMapId, setGoogleMapsMapId] = useState('');
+  const [tempMapId, setTempMapId] = useState('');
   const [isTestingApi, setIsTestingApi] = useState(false);
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const storedApiKey = window.localStorage?.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim() ?? '';
+    const storedMapId = window.localStorage?.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim() ?? '';
+
+    setGoogleMapsApiKey(storedApiKey);
+    setTempApiKey(storedApiKey);
+    setGoogleMapsMapId(storedMapId);
+    setTempMapId(storedMapId);
+  }, []);
 
   const tabs = [
     { id: 'maps', label: 'Mapas', icon: Map },
@@ -100,10 +121,21 @@ export const AdminSettings: React.FC = () => {
   };
 
   const handleSaveApiKey = async () => {
+    if (!tempMapId.trim()) {
+      setApiTestResult({ success: false, message: 'ID do mapa é obrigatório.' });
+      return;
+    }
+
     const isValid = await testGoogleMapsAPI(tempApiKey);
     if (isValid) {
-      setGoogleMapsApiKey(tempApiKey);
-      localStorage.setItem('googleMapsApiKey', tempApiKey);
+      const trimmedApiKey = tempApiKey.trim();
+      const trimmedMapId = tempMapId.trim();
+
+      setGoogleMapsApiKey(trimmedApiKey);
+      setGoogleMapsMapId(trimmedMapId);
+      localStorage.setItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY, trimmedApiKey);
+      localStorage.setItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY, trimmedMapId);
+      setApiTestResult({ success: true, message: 'Configurações salvas com sucesso!' });
     }
   };
 
@@ -141,6 +173,22 @@ export const AdminSettings: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  ID do mapa
+                </label>
+                <input
+                  type="text"
+                  value={tempMapId}
+                  onChange={(e) => setTempMapId(e.target.value)}
+                  placeholder="ex: d0e5f9a1c3b4abcd"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                  Utilize um mapa baseado em vetores com suporte a marcadores avançados, criado no Google Cloud Console.
+                </p>
+              </div>
+
               {apiTestResult && (
                 <div className={`border rounded-lg p-3 ${
                   apiTestResult.success 
@@ -172,7 +220,7 @@ export const AdminSettings: React.FC = () => {
                 </button>
                 <button
                   onClick={handleSaveApiKey}
-                  disabled={isTestingApi || !tempApiKey.trim()}
+                  disabled={isTestingApi || !tempApiKey.trim() || !tempMapId.trim()}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Salvar Configuração
@@ -202,7 +250,10 @@ export const AdminSettings: React.FC = () => {
           <li>Vá em "Credenciais" e crie uma chave de API</li>
           <li>Configure as restrições de domínio se necessário</li>
           <li>
-            <strong className="text-red-600">IMPORTANTE:</strong> Habilite o faturamento no projeto 
+            Em "Mapas personalizados", crie um mapa baseado em vetores com suporte a marcadores avançados e copie o ID gerado
+          </li>
+          <li>
+            <strong className="text-red-600">IMPORTANTE:</strong> Habilite o faturamento no projeto
             (obrigatório mesmo para uso gratuito)
           </li>
         </ol>
@@ -222,7 +273,7 @@ export const AdminSettings: React.FC = () => {
       </div>
 
       {/* Current Configuration */}
-      {googleMapsApiKey && (
+      {googleMapsApiKey && googleMapsMapId && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle className="text-green-600" size={16} />
@@ -230,6 +281,9 @@ export const AdminSettings: React.FC = () => {
           </div>
           <p className="text-sm text-green-700">
             Google Maps está configurado e funcionando. A chave da API está salva e sendo usada nos mapas da plataforma.
+          </p>
+          <p className="mt-2 text-xs text-green-700">
+            ID do mapa em uso: <span className="font-mono">{googleMapsMapId}</span>
           </p>
         </div>
       )}

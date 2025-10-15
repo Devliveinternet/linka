@@ -2,6 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { MapPin, Navigation, Square, Circle, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
 import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
+import {
+  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
+  GOOGLE_MAPS_MAP_ID_STORAGE_KEY
+} from '../../utils/googleMaps';
 
 interface FleetMapProps {
   devices: Device[];
@@ -17,11 +21,18 @@ export const FleetMap: React.FC<FleetMapProps> = ({
   onDeviceSelect
 }) => {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
+  const [googleMapsMapId, setGoogleMapsMapId] = useState<string>('');
 
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('googleMapsApiKey');
+    const savedApiKey = localStorage.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim();
+    const savedMapId = localStorage.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim();
+
     if (savedApiKey) {
       setGoogleMapsApiKey(savedApiKey);
+    }
+
+    if (savedMapId) {
+      setGoogleMapsMapId(savedMapId);
     }
   }, []);
 
@@ -50,7 +61,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     getStatusLabel,
     focusOnDevice,
     loadError
-  } = useGoogleFleetMap({ apiKey: googleMapsApiKey, devices, vehicles });
+  } = useGoogleFleetMap({ apiKey: googleMapsApiKey, mapId: googleMapsMapId, devices, vehicles });
 
   useEffect(() => {
     if (selectedDevice) {
