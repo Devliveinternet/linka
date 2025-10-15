@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { GoogleMapsIntegration } from './GoogleMapsIntegration';
-import { Device, Driver, Vehicle } from '../../types';
-import { Settings, AlertCircle } from 'lucide-react';
+import { OpenStreetMapIntegration } from './OpenStreetMapIntegration';
+import { Device, Driver, Vehicle, MapProvider } from '../../types';
+import { Settings, AlertCircle, Map as MapIcon } from 'lucide-react';
 
 interface FleetMapViewProps {
   devices: Device[];
@@ -10,21 +11,68 @@ interface FleetMapViewProps {
   onNavigateToAdmin?: () => void;
 }
 
-export const FleetMapView: React.FC<FleetMapViewProps> = ({ 
-  devices, 
-  drivers, 
+export const FleetMapView: React.FC<FleetMapViewProps> = ({
+  devices,
+  drivers,
   vehicles,
   onNavigateToAdmin
 }) => {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
+  const [mapProvider, setMapProvider] = useState<MapProvider['id']>('openstreetmap');
 
-  // Load API key from localStorage on component mount
+  const resolveProvider = (provider: string | null): MapProvider['id'] => {
+    if (provider === 'google' || provider === 'openstreetmap') {
+      return provider;
+    }
+    return 'openstreetmap';
+  };
+
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('googleMapsApiKey');
-    if (savedApiKey) {
-      setGoogleMapsApiKey(savedApiKey);
+    if (typeof window === 'undefined') return;
+
+    const storedProvider = resolveProvider(localStorage.getItem('mapProvider'));
+    setMapProvider(storedProvider);
+
+    if (storedProvider === 'google') {
+      const savedApiKey = localStorage.getItem('googleMapsApiKey');
+      setGoogleMapsApiKey(savedApiKey ?? '');
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'mapProvider') {
+        const provider = resolveProvider(event.newValue);
+        setMapProvider(provider);
+      }
+
+      if (event.key === 'googleMapsApiKey') {
+        setGoogleMapsApiKey(event.newValue ?? '');
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (mapProvider === 'google') {
+      const savedApiKey = localStorage.getItem('googleMapsApiKey');
+      setGoogleMapsApiKey(savedApiKey ?? '');
+    }
+  }, [mapProvider]);
+
+  if (mapProvider !== 'google') {
+    return (
+      <OpenStreetMapIntegration
+        devices={devices}
+        vehicles={vehicles}
+      />
+    );
+  }
 
   // If no API key is configured, show configuration prompt
   if (!googleMapsApiKey) {
@@ -54,8 +102,12 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
                 <AlertCircle className="text-blue-600 mt-0.5" size={16} />
                 <div className="text-left">
                   <p className="text-sm text-blue-700">
-                    <strong>Importante:</strong> A configuração da API do Google Maps deve ser feita na seção de 
+                    <strong>Importante:</strong> A configuração da API do Google Maps deve ser feita na seção de
                     Administração → Configurações → Mapas.
+                  </p>
+                  <p className="text-sm text-blue-700 mt-2 flex items-center gap-2">
+                    <MapIcon size={16} className="shrink-0" />
+                    Caso precise de um mapa gratuito temporariamente, selecione o provedor OpenStreetMap nas configurações.
                   </p>
                 </div>
               </div>
