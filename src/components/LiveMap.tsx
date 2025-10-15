@@ -3,7 +3,13 @@ import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from
 import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { useAuth } from '../context/AuthContext';
-import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID, resetGoogleMapsLoaderInstance } from '../utils/googleMaps';
+import {
+  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
+  GOOGLE_MAPS_LIBRARIES,
+  GOOGLE_MAPS_MAP_ID_STORAGE_KEY,
+  GOOGLE_MAPS_SCRIPT_ID,
+  resetGoogleMapsLoaderInstance
+} from '../utils/googleMaps';
 
 type Position = {
   id?: number;
@@ -237,7 +243,8 @@ export default function LiveMap() {
     const ensureGoogleMapsLoaded = async () => {
       if (typeof window === 'undefined') return;
 
-      const storedKey = window.localStorage?.getItem('googleMapsApiKey')?.trim() ?? '';
+      const storedKey = window.localStorage?.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim() ?? '';
+      const storedMapId = window.localStorage?.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim() ?? '';
       const envKey = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined)?.trim() ?? '';
       let apiKey = storedKey || envKey;
 
@@ -326,6 +333,7 @@ export default function LiveMap() {
         zoom: 5,
         streetViewControl: false,
         mapTypeControl: false,
+        ...(storedMapId ? { mapId: storedMapId } : {})
       });
       infoRef.current = new google.maps.InfoWindow();
 

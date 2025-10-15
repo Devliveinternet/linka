@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { GoogleMapsIntegration } from './GoogleMapsIntegration';
 import { Device, Driver, Vehicle } from '../../types';
 import { Settings, AlertCircle } from 'lucide-react';
+import {
+  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
+  GOOGLE_MAPS_MAP_ID_STORAGE_KEY
+} from '../../utils/googleMaps';
 
 interface FleetMapViewProps {
   devices: Device[];
@@ -17,17 +21,24 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
   onNavigateToAdmin
 }) => {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
+  const [googleMapsMapId, setGoogleMapsMapId] = useState<string>('');
 
   // Load API key from localStorage on component mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('googleMapsApiKey');
+    const savedApiKey = localStorage.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim();
+    const savedMapId = localStorage.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim();
+
     if (savedApiKey) {
       setGoogleMapsApiKey(savedApiKey);
+    }
+
+    if (savedMapId) {
+      setGoogleMapsMapId(savedMapId);
     }
   }, []);
 
   // If no API key is configured, show configuration prompt
-  if (!googleMapsApiKey) {
+  if (!googleMapsApiKey || !googleMapsMapId) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -41,12 +52,12 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
           <div className="max-w-md mx-auto text-center">
             <div className="p-4 bg-yellow-100 rounded-lg mb-6">
               <Settings className="w-12 h-12 text-yellow-600 mx-auto mb-2" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Configuração Necessária
-              </h3>
-              <p className="text-sm text-gray-600">
-                Para usar o mapa interativo, é necessário configurar a API do Google Maps.
-              </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Configuração Necessária
+            </h3>
+            <p className="text-sm text-gray-600">
+              Para usar o mapa interativo, é necessário configurar a API do Google Maps e um ID de mapa compatível.
+            </p>
             </div>
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
@@ -79,6 +90,7 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
                 <li>Vá em Administração → Configurações</li>
                 <li>Clique na aba "Mapas"</li>
                 <li>Insira sua chave da API do Google Maps</li>
+                <li>Informe o ID de mapa com suporte a marcadores avançados</li>
                 <li>Teste e salve a configuração</li>
                 <li>Retorne ao mapa para usar a funcionalidade</li>
               </ol>
