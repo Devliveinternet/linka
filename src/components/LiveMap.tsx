@@ -136,6 +136,7 @@ export default function LiveMap() {
   const mapDiv = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map>();
   const loaderRef = useRef<Loader | null>(null);
+  const lastLoadedApiKeyRef = useRef<string>('');
   const markersRef = useRef<Map<number, google.maps.marker.AdvancedMarkerElement>>(new Map());
   const polylinesRef = useRef<Map<number, google.maps.Polyline>>(new Map());
   const geofenceOverlaysRef = useRef<Map<number, google.maps.Circle | google.maps.Polygon>>(new Map());
@@ -267,6 +268,14 @@ export default function LiveMap() {
         }
       }
 
+      if (loaderRef.current && lastLoadedApiKeyRef.current && lastLoadedApiKeyRef.current !== apiKey) {
+        loaderRef.current = null;
+        lastLoadedApiKeyRef.current = '';
+        if ((window as any).google) {
+          delete (window as any).google;
+        }
+      }
+
       if (!apiKey) {
         if (!cancelled) {
           setMapError('Configure a chave da API do Google Maps para visualizar o mapa.');
@@ -281,6 +290,7 @@ export default function LiveMap() {
           libraries: [...GOOGLE_MAPS_LIBRARIES],
           id: GOOGLE_MAPS_SCRIPT_ID,
         });
+        lastLoadedApiKeyRef.current = apiKey;
       }
 
       try {
@@ -300,6 +310,8 @@ export default function LiveMap() {
           }
           setMapError(`Não foi possível carregar o Google Maps. ${friendly}`);
         }
+        lastLoadedApiKeyRef.current = '';
+        loaderRef.current = null;
         return;
       }
 

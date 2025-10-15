@@ -71,6 +71,7 @@ export const useGoogleFleetMap = ({
   const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
   const loaderRef = useRef<Loader>();
+  const lastLoadedApiKeyRef = useRef<string>();
 
   const createVehicleMarkerContent = useCallback((icon: ReturnType<typeof createVehicleIcon>) => {
     const wrapper = document.createElement('div');
@@ -287,6 +288,21 @@ export const useGoogleFleetMap = ({
       return;
     }
 
+    if (typeof window !== 'undefined') {
+      const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID);
+      const hasDifferentApiKeyLoaded =
+        lastLoadedApiKeyRef.current && lastLoadedApiKeyRef.current !== apiKey;
+
+      if (hasDifferentApiKeyLoaded) {
+        existingScript?.remove();
+        if ((window as any).google) {
+          delete (window as any).google;
+        }
+        loaderRef.current = undefined;
+        lastLoadedApiKeyRef.current = undefined;
+      }
+    }
+
     if (!loaderRef.current) {
       loaderRef.current = new Loader({
         apiKey,
@@ -294,6 +310,7 @@ export const useGoogleFleetMap = ({
         libraries: [...GOOGLE_MAPS_LIBRARIES],
         id: GOOGLE_MAPS_SCRIPT_ID
       });
+      lastLoadedApiKeyRef.current = apiKey;
     }
 
     try {
@@ -328,6 +345,7 @@ export const useGoogleFleetMap = ({
       setMap(null);
       setLoadError(resolveGoogleMapsErrorMessage(error));
       loaderRef.current = undefined;
+      lastLoadedApiKeyRef.current = undefined;
     }
   }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage]);
 
