@@ -15,7 +15,7 @@ import {
   getVehiclePhotoFromDevice,
   getVehicleTypeFromDevice
 } from '../utils/vehicleIcons';
-import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../utils/googleMaps';
+import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID, resetGoogleMapsLoaderInstance } from '../utils/googleMaps';
 import { Circle, Navigation, Square, type LucideIcon } from 'lucide-react';
 
 type MapStyle = 'roadmap' | 'satellite' | 'terrain';
@@ -300,6 +300,7 @@ export const useGoogleFleetMap = ({
         }
         loaderRef.current = undefined;
         lastLoadedApiKeyRef.current = undefined;
+        resetGoogleMapsLoaderInstance();
       }
     }
 
@@ -346,6 +347,7 @@ export const useGoogleFleetMap = ({
       setLoadError(resolveGoogleMapsErrorMessage(error));
       loaderRef.current = undefined;
       lastLoadedApiKeyRef.current = undefined;
+      resetGoogleMapsLoaderInstance();
     }
   }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage]);
 

@@ -3,7 +3,7 @@ import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from
 import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { useAuth } from '../context/AuthContext';
-import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID } from '../utils/googleMaps';
+import { GOOGLE_MAPS_LIBRARIES, GOOGLE_MAPS_SCRIPT_ID, resetGoogleMapsLoaderInstance } from '../utils/googleMaps';
 
 type Position = {
   id?: number;
@@ -260,11 +260,13 @@ export default function LiveMap() {
           if ((window as any).google) {
             delete (window as any).google;
           }
+          resetGoogleMapsLoaderInstance();
         } else if (existingKey && apiKey && existingKey !== apiKey) {
           existingScript.remove();
           if ((window as any).google) {
             delete (window as any).google;
           }
+          resetGoogleMapsLoaderInstance();
         }
       }
 
@@ -274,6 +276,7 @@ export default function LiveMap() {
         if ((window as any).google) {
           delete (window as any).google;
         }
+        resetGoogleMapsLoaderInstance();
       }
 
       if (!apiKey) {
@@ -312,6 +315,7 @@ export default function LiveMap() {
         }
         lastLoadedApiKeyRef.current = '';
         loaderRef.current = null;
+        resetGoogleMapsLoaderInstance();
         return;
       }
 
