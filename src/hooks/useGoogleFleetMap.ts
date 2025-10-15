@@ -331,6 +331,7 @@ export const useGoogleFleetMap = ({
       const mapInstance = new google.maps.Map(mapRef.current, {
         center: { lat: -16.6799, lng: -49.255 },
         zoom: 12,
+        mapId: "7b37dd94de065520daa970be",
         mapTypeId: google.maps.MapTypeId.ROADMAP,
         styles: [
           {
