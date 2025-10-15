@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useAuth, API_BASE_URL } from '../context/AuthContext';
+import { useAuth, API_BASE_URL, buildApiUrl } from '../context/AuthContext';
 
 type Handlers = {
   onPositions?: (positions: any[]) => void;
@@ -13,7 +13,9 @@ export function useTraccarRealtime({ onPositions, onDevices, onEvents }: Handler
   useEffect(() => {
     if (!token) return undefined;
 
-    const url = new URL('/traccar/stream', API_BASE_URL);
+    const fallbackBase = typeof window !== 'undefined' ? window.location.origin : '';
+    const baseForUrl = API_BASE_URL || fallbackBase || 'http://localhost';
+    const url = new URL(buildApiUrl('/traccar/stream'), baseForUrl);
     url.searchParams.set('token', token);
 
     const es = new EventSource(url.toString());
