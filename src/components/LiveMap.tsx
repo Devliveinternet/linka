@@ -333,7 +333,7 @@ export default function LiveMap() {
         zoom: 5,
         streetViewControl: false,
         mapTypeControl: false,
-        mapId: "7b37dd94de065520daa970be"
+        mapId: "7b37dd94de065520daa970be",
         ...(storedMapId ? { mapId: storedMapId } : {})
       });
       infoRef.current = new google.maps.InfoWindow();
