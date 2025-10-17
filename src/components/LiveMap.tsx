@@ -9,15 +9,24 @@ import {
   resetGoogleMapsLoaderInstance
 } from '../utils/googleMaps';
 
-type Position = {
-  id?: number;
-  deviceId: number;
-  latitude: number;
-  longitude: number;
+type RawPosition = {
+  id?: number | string;
+  deviceId?: number | string;
+  latitude?: number | string;
+  longitude?: number | string;
+  lat?: number | string;
+  lon?: number | string;
+  lng?: number | string;
   speed?: number;       // Se vier em knots, ajuste fmtSpeed.
   fixTime?: string;
   deviceTime?: string;
   serverTime?: string;
+};
+
+type Position = RawPosition & {
+  deviceId: number;
+  latitude: number;
+  longitude: number;
 };
 
 type Geofence = {
@@ -38,8 +47,54 @@ type TraccarEvent = {
   attributes?: Record<string, any>;
 };
 
-const tsOf = (p: Position) =>
+const tsOf = (p: RawPosition) =>
   new Date(p.fixTime || p.deviceTime || p.serverTime || 0).getTime();
+
+const coerceNumber = (value: unknown): number | null => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const normalizePosition = (raw: RawPosition | null | undefined): Position | null => {
+  if (!raw) return null;
+
+  const deviceIdValue = typeof raw.deviceId === 'string' ? Number(raw.deviceId) : raw.deviceId;
+  if (!Number.isFinite(deviceIdValue)) return null;
+
+  const latCandidate = raw.latitude ?? raw.lat;
+  const lonCandidate = raw.longitude ?? raw.lng ?? raw.lon;
+  const lat = coerceNumber(latCandidate);
+  const lon = coerceNumber(lonCandidate);
+  if (lat == null || lon == null) return null;
+
+  if (
+    raw.deviceId === deviceIdValue &&
+    raw.latitude === lat &&
+    raw.longitude === lon
+  ) {
+    return raw as Position;
+  }
+
+  return {
+    ...raw,
+    deviceId: deviceIdValue,
+    latitude: lat,
+    longitude: lon,
+  } as Position;
+};
+
+const normalizePositions = (positions: RawPosition[] | null | undefined): Position[] => {
+  if (!Array.isArray(positions)) return [];
+  return positions
+    .map((p) => normalizePosition(p))
+    .filter((p): p is Position => Boolean(p));
+};
 
 // Se velocidade vier em knots (padrão Traccar), troque 3.6 por 1.852
 const fmtSpeed = (v?: number) => (v != null ? `${(v * 3.6).toFixed(1)} km/h` : '-');
@@ -242,11 +297,14 @@ export default function LiveMap() {
       deviceId: String(deviceId),
       hours: String(hours),
     });
-    return apiFetch<Position[]>(`/traccar/route?${search.toString()}`);
+    return apiFetch<RawPosition[]>(`/traccar/route?${search.toString()}`);
   }, [apiFetch]);
 
-  function drawRoute(deviceId: number, positions: Position[]) {
+  function drawRoute(deviceId: number, positions: RawPosition[]) {
     if (!mapRef.current || !positions.length) return;
+
+    const normalized = normalizePositions(positions);
+    if (!normalized.length) return;
 
     // remove rota anterior do mesmo device
     const old = polylinesRef.current.get(deviceId);
@@ -255,7 +313,7 @@ export default function LiveMap() {
       polylinesRef.current.delete(deviceId);
     }
 
-    const path = positions.map((p) => ({ lat: p.latitude, lng: p.longitude }));
+    const path = normalized.map((p) => ({ lat: p.latitude, lng: p.longitude }));
 
     // setas de direção
     const arrowSymbol: google.maps.Symbol = {
@@ -457,9 +515,9 @@ export default function LiveMap() {
       .then((m) => setNameMap(m || {}))
       .catch(() => {});
 
-    apiFetch<Position[]>('/traccar/positions/latest')
+    apiFetch<RawPosition[]>('/traccar/positions/latest')
       .then((positions) => {
-        applyBatch(positions);
+        applyBatch(normalizePositions(positions));
         fitToMarkers();
       })
       .catch(() => {});
@@ -515,7 +573,7 @@ export default function LiveMap() {
 
   // tempo real via SSE: posições + eventos (geofence enter/exit)
   useTraccarRealtime({
-    onPositions: (positions: Position[]) => {
+    onPositions: (positions: RawPosition[]) => {
       const latest = reduceToLatestByDevice(positions);
       applyBatch(latest);
     },
@@ -542,12 +600,13 @@ export default function LiveMap() {
   });
 
   // -------- helpers --------
-  function reduceToLatestByDevice(batch: Position[]): Position[] {
+  function reduceToLatestByDevice(batch: RawPosition[]): Position[] {
     const byDevice = new Map<number, Position>();
-    for (const p of batch) {
-      if (!p || typeof p.latitude !== 'number' || typeof p.longitude !== 'number') continue;
-      const prev = byDevice.get(p.deviceId);
-      if (!prev || tsOf(p) >= tsOf(prev)) byDevice.set(p.deviceId, p);
+    for (const item of batch) {
+      const normalized = normalizePosition(item);
+      if (!normalized) continue;
+      const prev = byDevice.get(normalized.deviceId);
+      if (!prev || tsOf(normalized) >= tsOf(prev)) byDevice.set(normalized.deviceId, normalized);
     }
     return Array.from(byDevice.values());
   }
