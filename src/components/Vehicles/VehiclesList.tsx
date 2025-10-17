@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Search, Plus, Truck, Clock, Save, X, Upload, Image as ImageIcon } from 'lucide-react';
+import { Search, Plus, Truck, Clock, Save, X, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Device, Vehicle, Driver } from '../../types';
 import { mockClients } from '../../data/adminMockData';
 import { handleImageUpload, validateImageUrl } from '../../utils/vehicleIcons';
+import { useAuth } from '../../context/AuthContext';
 
 type VehicleFormState = {
   plate: string;
@@ -59,6 +60,9 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
   const [vehicleErrors, setVehicleErrors] = useState<Record<string, string>>({});
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [vehiclePhotoError, setVehiclePhotoError] = useState('');
+  const [isSavingVehicle, setIsSavingVehicle] = useState(false);
+  const [vehicleSubmitError, setVehicleSubmitError] = useState<string | null>(null);
+  const { apiFetch } = useAuth();
 
   useEffect(() => {
     setLocalDevices(devices);
@@ -73,6 +77,7 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
     setVehicleErrors({});
     setVehiclePhotoError('');
     setIsUploadingPhoto(false);
+    setVehicleSubmitError(null);
   };
 
   const handleVehicleInputChange = <K extends keyof VehicleFormState>(field: K, value: VehicleFormState[K]) => {
@@ -119,6 +124,268 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
   const removeVehiclePhoto = () => {
     setVehicleForm(prev => ({ ...prev, photo: '' }));
     setVehiclePhotoError('');
+  };
+
+  const buildTraccarPayload = (
+    trackerIdValue: string,
+    plateValue: string,
+    brandValue: string,
+    modelValue: string,
+    colorValue: string,
+    chassisValue: string,
+    ensuredYear: number,
+    ensuredInitial: number,
+    ensuredCurrent: number,
+  ) => {
+    const attributes: Record<string, any> = {
+      trackerId: trackerIdValue,
+      clientId: vehicleForm.clientId,
+      brand: brandValue,
+      model: modelValue,
+      color: colorValue || undefined,
+      year: ensuredYear,
+      chassisNumber: chassisValue,
+      vehicleType: vehicleForm.vehicleType,
+      initialOdometer: ensuredInitial,
+      currentOdometer: ensuredCurrent,
+      photo: vehicleForm.photo || undefined,
+      status: vehicleForm.status,
+    };
+
+    const cleanedAttributes = Object.entries(attributes).reduce<Record<string, any>>((acc, [key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return acc;
+      }
+      acc[key] = value;
+      return acc;
+    }, {});
+
+    const payload: Record<string, any> = {
+      name: plateValue,
+      uniqueId: trackerIdValue,
+      trackerId: trackerIdValue,
+      plate: plateValue,
+      clientId: vehicleForm.clientId,
+      brand: brandValue,
+      model: modelValue,
+      color: colorValue || undefined,
+      year: ensuredYear,
+      chassisNumber: chassisValue,
+      vehicleType: vehicleForm.vehicleType,
+      initialOdometer: ensuredInitial,
+      currentOdometer: ensuredCurrent,
+      photo: vehicleForm.photo || undefined,
+      status: vehicleForm.status,
+      attributes: cleanedAttributes,
+    };
+
+    return Object.entries(payload).reduce<Record<string, any>>((acc, [key, value]) => {
+      if (value === undefined || value === null || value === '') {
+        return acc;
+      }
+      if (typeof value === 'string') {
+        acc[key] = value.trim();
+        return acc;
+      }
+      acc[key] = value;
+      return acc;
+    }, {});
+  };
+
+  const handleSaveVehicle = async () => {
+    if (isSavingVehicle) {
+      return;
+    }
+
+    const newVehicleErrors: Record<string, string> = {};
+    const trackerIdValue = vehicleForm.trackerId.trim();
+    let initialOdometerValue = parseIntegerInput(vehicleForm.initialOdometer);
+    let currentOdometerValue = parseIntegerInput(vehicleForm.currentOdometer);
+    let yearValue = parseIntegerInput(vehicleForm.year);
+
+    if (!vehicleForm.plate.trim()) {
+      newVehicleErrors.plate = 'Placa é obrigatória';
+    }
+    if (!vehicleForm.clientId) {
+      newVehicleErrors.clientId = 'Selecione um cliente';
+    }
+    if (!trackerIdValue) {
+      newVehicleErrors.trackerId = 'Informe o IMEI ou ID do rastreador';
+    } else if (localDevices.some(device => device.imei === trackerIdValue)) {
+      newVehicleErrors.trackerId = 'Este identificador já está vinculado a outro dispositivo';
+    }
+    if (!vehicleForm.brand.trim()) {
+      newVehicleErrors.brand = 'Marca é obrigatória';
+    }
+    if (!vehicleForm.model.trim()) {
+      newVehicleErrors.model = 'Modelo é obrigatório';
+    }
+    if (yearValue === undefined) {
+      newVehicleErrors.year = 'Informe um ano válido';
+    } else {
+      const currentYear = new Date().getFullYear();
+      if (yearValue < 1990 || yearValue > currentYear + 1) {
+        newVehicleErrors.year = `Ano deve estar entre 1990 e ${currentYear + 1}`;
+      }
+    }
+    if (!vehicleForm.vehicleType) {
+      newVehicleErrors.vehicleType = 'Selecione o tipo do veículo';
+    }
+    if (!vehicleForm.status) {
+      newVehicleErrors.status = 'Selecione o status';
+    }
+    if (!vehicleForm.chassisNumber.trim()) {
+      newVehicleErrors.chassisNumber = 'Número do chassi é obrigatório';
+    }
+
+    if (vehicleForm.initialOdometer && initialOdometerValue === undefined) {
+      newVehicleErrors.initialOdometer = 'Informe um número válido';
+    }
+    if (vehicleForm.currentOdometer && currentOdometerValue === undefined) {
+      newVehicleErrors.currentOdometer = 'Informe um número válido';
+    }
+    if (
+      initialOdometerValue !== undefined &&
+      currentOdometerValue !== undefined &&
+      currentOdometerValue < initialOdometerValue
+    ) {
+      newVehicleErrors.currentOdometer = 'Odômetro atual não pode ser menor que o inicial';
+    }
+
+    setVehicleErrors(newVehicleErrors);
+
+    if (Object.keys(newVehicleErrors).length > 0) {
+      return;
+    }
+
+    if (yearValue === undefined) {
+      yearValue = new Date().getFullYear();
+    }
+    if (initialOdometerValue === undefined) {
+      initialOdometerValue = 0;
+    }
+    if (currentOdometerValue === undefined) {
+      currentOdometerValue = initialOdometerValue ?? 0;
+    }
+
+    const ensuredYear = yearValue ?? new Date().getFullYear();
+    const ensuredInitial = initialOdometerValue ?? 0;
+    const ensuredCurrent = currentOdometerValue ?? ensuredInitial;
+    const timestamp = Date.now();
+    const newVehicleId = `vehicle_${timestamp}`;
+    const nextMaintenance = ensuredCurrent + 10000;
+    const plateValue = vehicleForm.plate.trim().toUpperCase();
+    const brandValue = vehicleForm.brand.trim();
+    const modelValue = vehicleForm.model.trim();
+    const colorValue = vehicleForm.color.trim();
+    const chassisValue = vehicleForm.chassisNumber.trim();
+
+    const payload = buildTraccarPayload(
+      trackerIdValue,
+      plateValue,
+      brandValue,
+      modelValue,
+      colorValue,
+      chassisValue,
+      ensuredYear,
+      ensuredInitial,
+      ensuredCurrent,
+    );
+
+    setIsSavingVehicle(true);
+    setVehicleSubmitError(null);
+
+    try {
+      const createdDevice = await apiFetch<any>('/traccar/devices', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const createdAttributes =
+        createdDevice?.attributes && typeof createdDevice.attributes === 'object' && !Array.isArray(createdDevice.attributes)
+          ? createdDevice.attributes
+          : {};
+
+      const resolvedDeviceId = createdDevice?.id != null ? String(createdDevice.id) : `device_${timestamp}`;
+      const resolvedTrackerId = createdDevice?.uniqueId != null ? String(createdDevice.uniqueId) : trackerIdValue;
+      const resolvedStatus = typeof createdDevice?.status === 'string' ? createdDevice.status.toLowerCase() : 'offline';
+      const normalizedStatus: Device['status'] =
+        resolvedStatus === 'online'
+          ? 'online'
+          : resolvedStatus === 'inactive'
+            ? 'inactive'
+            : 'offline';
+      const resolvedModel =
+        (createdDevice?.model as string) ||
+        (createdDevice?.category as string) ||
+        (createdAttributes?.model as string) ||
+        modelValue ||
+        'Veículo';
+      const resolvedProtocol =
+        typeof createdDevice?.protocol === 'string' && createdDevice.protocol.trim() ? createdDevice.protocol : 'GT06';
+      const resolvedLastUpdate =
+        (createdDevice?.lastUpdate as string) || (createdDevice?.createTime as string) || new Date().toISOString();
+      const resolvedTenant =
+        typeof createdDevice?.tenantId === 'string' && createdDevice.tenantId.trim()
+          ? createdDevice.tenantId
+          : 'default';
+
+      const newVehicle: Vehicle = {
+        id: newVehicleId,
+        tenantId: resolvedTenant,
+        clientId: vehicleForm.clientId,
+        plate: plateValue,
+        model: modelValue,
+        year: ensuredYear,
+        brand: brandValue,
+        fuelType: 'diesel',
+        deviceId: resolvedDeviceId,
+        driverId: undefined,
+        status: vehicleForm.status,
+        odometer: ensuredCurrent,
+        nextMaintenance,
+        vehicleType: vehicleForm.vehicleType,
+        photo: vehicleForm.photo || undefined,
+        color: colorValue || undefined,
+        chassisNumber: chassisValue,
+        initialOdometer: ensuredInitial,
+        currentOdometer: ensuredCurrent,
+        trackerId: resolvedTrackerId,
+      };
+
+      const iccid =
+        typeof createdAttributes?.iccid === 'string'
+          ? createdAttributes.iccid
+          : typeof createdDevice?.iccid === 'string'
+            ? createdDevice.iccid
+            : '';
+
+      const newDevice: Device = {
+        id: resolvedDeviceId,
+        tenantId: resolvedTenant,
+        imei: resolvedTrackerId,
+        iccid,
+        model: resolvedModel,
+        protocol: resolvedProtocol,
+        status: normalizedStatus,
+        lastUpdate: resolvedLastUpdate,
+        position: undefined,
+        driverId: undefined,
+        vehicleId: newVehicleId,
+      };
+
+      setLocalVehicles(prev => [...prev, newVehicle]);
+      setLocalDevices(prev => [...prev, newDevice]);
+
+      setIsCreateDeviceModalOpen(false);
+      resetVehicleForm();
+    } catch (error) {
+      console.error('Erro ao salvar veículo no Traccar:', error);
+      const message = error instanceof Error ? error.message : 'Não foi possível salvar o veículo';
+      setVehicleSubmitError(message);
+    } finally {
+      setIsSavingVehicle(false);
+    }
   };
 
   const getVehicleForDevice = (deviceId: string) => {
@@ -175,7 +442,10 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
           <p className="text-sm sm:text-base text-gray-600">Gestão da frota e dispositivos</p>
         </div>
         <button
-          onClick={() => setIsCreateDeviceModalOpen(true)}
+          onClick={() => {
+            setIsCreateDeviceModalOpen(true);
+            setVehicleSubmitError(null);
+          }}
           className="flex items-center gap-1 sm:gap-2 bg-blue-600 text-white px-2 sm:px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
         >
           <Plus size={16} className="sm:w-5 sm:h-5" />
@@ -607,140 +877,16 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
                 Cancelar
               </button>
               <button
-                onClick={() => {
-                  let yearValue = parseIntegerInput(vehicleForm.year);
-                  let initialOdometerValue = parseIntegerInput(vehicleForm.initialOdometer);
-                  let currentOdometerValue = parseIntegerInput(vehicleForm.currentOdometer);
-                  const newVehicleErrors: Record<string, string> = {};
-
-                  const trackerIdValue = vehicleForm.trackerId.trim();
-                  const trackerAlreadyExists = localDevices.some(device => device.imei === trackerIdValue);
-
-                  if (!vehicleForm.plate.trim()) {
-                    newVehicleErrors.plate = 'Placa é obrigatória';
-                  }
-                  if (!vehicleForm.clientId) {
-                    newVehicleErrors.clientId = 'Cliente é obrigatório';
-                  }
-                  if (!trackerIdValue) {
-                    newVehicleErrors.trackerId = 'Informe um identificador de rastreador';
-                  } else if (trackerAlreadyExists) {
-                    newVehicleErrors.trackerId = 'Este identificador já está vinculado a outro dispositivo';
-                  }
-                  if (!vehicleForm.brand.trim()) {
-                    newVehicleErrors.brand = 'Marca é obrigatória';
-                  }
-                  if (!vehicleForm.model.trim()) {
-                    newVehicleErrors.model = 'Modelo é obrigatório';
-                  }
-                  if (yearValue === undefined) {
-                    newVehicleErrors.year = 'Informe um ano válido';
-                  } else {
-                    const currentYear = new Date().getFullYear();
-                    if (yearValue < 1990 || yearValue > currentYear + 1) {
-                      newVehicleErrors.year = `Ano deve estar entre 1990 e ${currentYear + 1}`;
-                    }
-                  }
-                  if (!vehicleForm.vehicleType) {
-                    newVehicleErrors.vehicleType = 'Selecione o tipo do veículo';
-                  }
-                  if (!vehicleForm.status) {
-                    newVehicleErrors.status = 'Selecione o status';
-                  }
-                  if (!vehicleForm.chassisNumber.trim()) {
-                    newVehicleErrors.chassisNumber = 'Número do chassi é obrigatório';
-                  }
-
-                  if (vehicleForm.initialOdometer && initialOdometerValue === undefined) {
-                    newVehicleErrors.initialOdometer = 'Informe um número válido';
-                  }
-                  if (vehicleForm.currentOdometer && currentOdometerValue === undefined) {
-                    newVehicleErrors.currentOdometer = 'Informe um número válido';
-                  }
-                  if (
-                    initialOdometerValue !== undefined &&
-                    currentOdometerValue !== undefined &&
-                    currentOdometerValue < initialOdometerValue
-                  ) {
-                    newVehicleErrors.currentOdometer = 'Odômetro atual não pode ser menor que o inicial';
-                  }
-
-                  setVehicleErrors(newVehicleErrors);
-
-                  if (Object.keys(newVehicleErrors).length > 0) {
-                    return;
-                  }
-
-                  if (yearValue === undefined) {
-                    yearValue = new Date().getFullYear();
-                  }
-                  if (initialOdometerValue === undefined) {
-                    initialOdometerValue = 0;
-                  }
-                  if (currentOdometerValue === undefined) {
-                    currentOdometerValue = initialOdometerValue;
-                  }
-
-                  const ensuredYear = yearValue ?? new Date().getFullYear();
-                  const ensuredInitial = initialOdometerValue ?? 0;
-                  const ensuredCurrent = currentOdometerValue ?? ensuredInitial;
-                  const timestamp = Date.now();
-                  const newVehicleId = `vehicle_${timestamp}`;
-                  const nextMaintenance = ensuredCurrent + 10000;
-                  const plateValue = vehicleForm.plate.trim().toUpperCase();
-                  const brandValue = vehicleForm.brand.trim();
-                  const modelValue = vehicleForm.model.trim();
-                  const colorValue = vehicleForm.color.trim();
-                  const chassisValue = vehicleForm.chassisNumber.trim();
-
-                  const newVehicle: Vehicle = {
-                    id: newVehicleId,
-                    tenantId: 'default',
-                    clientId: vehicleForm.clientId,
-                    plate: plateValue,
-                    model: modelValue,
-                    year: ensuredYear,
-                    brand: brandValue,
-                    fuelType: 'diesel',
-                    status: vehicleForm.status,
-                    odometer: ensuredCurrent,
-                    nextMaintenance,
-                    vehicleType: vehicleForm.vehicleType,
-                    photo: vehicleForm.photo || undefined,
-                    color: colorValue || undefined,
-                    chassisNumber: chassisValue,
-                    initialOdometer: ensuredInitial,
-                    currentOdometer: ensuredCurrent,
-                    trackerId: trackerIdValue,
-                  };
-
-                  const newDevice: Device = {
-                    id: `device_${timestamp}`,
-                    tenantId: 'default',
-                    imei: trackerIdValue,
-                    iccid: '',
-                    model: modelValue || 'Veículo',
-                    protocol: 'GT06',
-                    status: 'offline',
-                    lastUpdate: new Date().toISOString(),
-                    position: undefined,
-                    driverId: undefined,
-                    vehicleId: newVehicleId,
-                  };
-
-                  newVehicle.deviceId = newDevice.id;
-
-                  setLocalVehicles(prev => [...prev, newVehicle]);
-                  setLocalDevices(prev => [...prev, newDevice]);
-
-                  setIsCreateDeviceModalOpen(false);
-                  resetVehicleForm();
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                onClick={handleSaveVehicle}
+                disabled={isSavingVehicle}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <Save size={16} />
-                Salvar Veículo
+                {isSavingVehicle ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save size={16} />}
+                {isSavingVehicle ? 'Salvando...' : 'Salvar Veículo'}
               </button>
+              {vehicleSubmitError && (
+                <p className="text-sm text-red-600 text-center">{vehicleSubmitError}</p>
+              )}
             </div>
           </div>
         </div>
