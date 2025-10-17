@@ -45,6 +45,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     if (isMaster) {
       return [
         ...base,
+        { id: 'vehicles', label: 'Veículos', icon: Truck },
         { id: 'drivers', label: 'Motoristas', icon: Users },
         { id: 'reports', label: 'Relatórios', icon: BarChart3 },
         { id: 'settings', label: 'Configurações', icon: SettingsIcon },
