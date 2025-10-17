@@ -2,10 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MapPin, Navigation, Square, Circle, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
 import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
-import {
-  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
-  GOOGLE_MAPS_MAP_ID_STORAGE_KEY
-} from '../../utils/googleMaps';
+import { useAuth } from '../../context/AuthContext';
 
 interface FleetMapProps {
   devices: Device[];
@@ -18,23 +15,59 @@ export const FleetMap: React.FC<FleetMapProps> = ({
   devices,
   vehicles = [],
   selectedDevice,
-  onDeviceSelect
+  onDeviceSelect,
 }) => {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
   const [googleMapsMapId, setGoogleMapsMapId] = useState<string>('');
+  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [configVersion, setConfigVersion] = useState(0);
+  const { apiFetch, token } = useAuth();
 
   useEffect(() => {
-    const savedApiKey = localStorage.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim();
-    const savedMapId = localStorage.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim();
-
-    if (savedApiKey) {
-      setGoogleMapsApiKey(savedApiKey);
+    if (typeof window === 'undefined') {
+      return;
     }
 
-    if (savedMapId) {
-      setGoogleMapsMapId(savedMapId);
-    }
+    const handler = () => setConfigVersion((prev) => prev + 1);
+    window.addEventListener('linka:map-config-updated', handler);
+    return () => window.removeEventListener('linka:map-config-updated', handler);
   }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setIsLoadingConfig(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingConfig(true);
+    setConfigError(null);
+
+    apiFetch<{ config?: { googleMapsApiKey?: string; googleMapsMapId?: string } }>('/config/maps')
+      .then((payload) => {
+        if (cancelled) return;
+        const config = payload?.config ?? (payload as any);
+        const apiKey = config?.googleMapsApiKey?.trim() ?? '';
+        const mapId = config?.googleMapsMapId?.trim() ?? '';
+        setGoogleMapsApiKey(apiKey);
+        setGoogleMapsMapId(mapId);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        console.error('Falha ao carregar configuração do mapa', error);
+        setConfigError(error?.message || 'Não foi possível carregar a configuração do mapa.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingConfig(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch, token, configVersion]);
 
   const {
     mapRef,
@@ -60,7 +93,7 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     getStatusIcon,
     getStatusLabel,
     focusOnDevice,
-    loadError
+    loadError,
   } = useGoogleFleetMap({ apiKey: googleMapsApiKey, mapId: googleMapsMapId, devices, vehicles });
 
   useEffect(() => {
@@ -85,6 +118,62 @@ export const FleetMap: React.FC<FleetMapProps> = ({
       onDeviceSelect(deviceId);
     }
   };
+
+  if (isLoadingConfig) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-gray-50 px-4 py-4 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">Mapa da Frota</h3>
+          <p className="text-sm text-gray-600">Visualização em tempo real com os mesmos recursos do módulo de mapas</p>
+        </div>
+        <div className="flex items-center justify-center h-72 sm:h-80 lg:h-96 text-gray-500">
+          Carregando configuração do mapa...
+        </div>
+      </div>
+    );
+  }
+
+  if (!googleMapsApiKey || !googleMapsMapId) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-gray-50 px-4 py-4 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">Mapa da Frota</h3>
+          <p className="text-sm text-gray-600">Visualização em tempo real</p>
+        </div>
+        <div className="relative h-72 sm:h-80 lg:h-96 bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center">
+          <div className="text-center">
+            <MapPin className="w-12 h-12 sm:w-16 sm:h-16 text-gray-400 mx-auto mb-3" />
+            <p className="text-sm sm:text-base text-gray-500 font-medium">Configure a API do Google Maps</p>
+            <p className="text-xs sm:text-sm text-gray-400 max-w-xs mx-auto">
+              {configError
+                ? configError
+                : 'Para visualizar o mapa interativo, acesse Administração → Configurações → Mapas e informe sua chave da API do Google Maps.'}
+            </p>
+          </div>
+        </div>
+        <div className="p-4 bg-gray-50 border-t border-gray-200">
+          <div className="flex items-center gap-4 text-xs sm:text-sm overflow-x-auto">
+            <div className="flex items-center gap-2">
+              <Navigation size={14} className="text-green-500" />
+              <span className="text-gray-700 whitespace-nowrap">Em movimento</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Square size={14} className="text-yellow-500" />
+              <span className="text-gray-700 whitespace-nowrap">Parado (ligado)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Circle size={14} className="text-blue-500" />
+              <span className="text-gray-700 whitespace-nowrap">Parado (desligado)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Circle size={14} className="text-gray-400" />
+              <span className="text-gray-700 whitespace-nowrap">Offline</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (googleMapsApiKey && typeof window !== 'undefined') {
     return (
@@ -347,42 +436,6 @@ export const FleetMap: React.FC<FleetMapProps> = ({
     );
   }
 
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="bg-gray-50 px-4 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900">Mapa da Frota</h3>
-        <p className="text-sm text-gray-600">Visualização em tempo real</p>
-      </div>
-      <div className="relative h-72 sm:h-80 lg:h-96 bg-gradient-to-br from-blue-50 to-green-50 flex items-center justify-center">
-        <div className="text-center">
-          <MapPin className="w-12 h-12 sm:w-16 sm:h-16 text-gray-400 mx-auto mb-3" />
-          <p className="text-sm sm:text-base text-gray-500 font-medium">Configure a API do Google Maps</p>
-          <p className="text-xs sm:text-sm text-gray-400 max-w-xs mx-auto">
-            Para visualizar o mapa interativo, acesse Administração → Configurações → Mapas e informe sua chave da API do Google Maps.
-          </p>
-        </div>
-      </div>
-      <div className="p-4 bg-gray-50 border-t border-gray-200">
-        <div className="flex items-center gap-4 text-xs sm:text-sm overflow-x-auto">
-          <div className="flex items-center gap-2">
-            <Navigation size={14} className="text-green-500" />
-            <span className="text-gray-700 whitespace-nowrap">Em movimento</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Square size={14} className="text-yellow-500" />
-            <span className="text-gray-700 whitespace-nowrap">Parado (ligado)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Circle size={14} className="text-blue-500" />
-            <span className="text-gray-700 whitespace-nowrap">Parado (desligado)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Circle size={14} className="text-gray-400" />
-            <span className="text-gray-700 whitespace-nowrap">Offline</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 };
 

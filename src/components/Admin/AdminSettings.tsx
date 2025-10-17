@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Save,
   Key,
@@ -7,17 +7,19 @@ import {
   CheckCircle,
   Settings as SettingsIcon,
   Globe,
-  Database,
-  Mail,
   Bell
 } from 'lucide-react';
 import { Loader } from '@googlemaps/js-api-loader';
 import {
-  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
   GOOGLE_MAPS_LIBRARIES,
-  GOOGLE_MAPS_MAP_ID_STORAGE_KEY,
   GOOGLE_MAPS_SCRIPT_ID
 } from '../../utils/googleMaps';
+import { useAuth } from '../../context/AuthContext';
+
+type MapConfigResponse = {
+  googleMapsApiKey?: string;
+  googleMapsMapId?: string;
+};
 
 export const AdminSettings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('maps');
@@ -26,28 +28,62 @@ export const AdminSettings: React.FC = () => {
   const [googleMapsMapId, setGoogleMapsMapId] = useState('');
   const [tempMapId, setTempMapId] = useState('');
   const [isTestingApi, setIsTestingApi] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const { apiFetch } = useAuth();
+
   useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
+    let cancelled = false;
 
-    const storedApiKey = window.localStorage?.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim() ?? '';
-    const storedMapId = window.localStorage?.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim() ?? '';
+    const loadConfig = async () => {
+      setIsLoadingConfig(true);
+      try {
+        const payload = await apiFetch<{ config?: MapConfigResponse }>('/config/maps');
+        if (cancelled) return;
 
-    setGoogleMapsApiKey(storedApiKey);
-    setTempApiKey(storedApiKey);
-    setGoogleMapsMapId(storedMapId);
-    setTempMapId(storedMapId);
-  }, []);
+        const config = payload?.config ?? (payload as unknown as MapConfigResponse);
+        const apiKey = config?.googleMapsApiKey?.trim() ?? '';
+        const mapId = config?.googleMapsMapId?.trim() ?? '';
 
-  const tabs = [
-    { id: 'maps', label: 'Mapas', icon: Map },
-    { id: 'system', label: 'Sistema', icon: SettingsIcon },
-    { id: 'notifications', label: 'Notificações', icon: Bell },
-    { id: 'integrations', label: 'Integrações', icon: Globe },
-  ];
+        setGoogleMapsApiKey(apiKey);
+        setTempApiKey(apiKey);
+        setGoogleMapsMapId(mapId);
+        setTempMapId(mapId);
+        setApiTestResult(null);
+      } catch (error: any) {
+        if (cancelled) return;
+        console.error('Falha ao carregar configuração do Google Maps', error);
+        setApiTestResult({
+          success: false,
+          message: error?.message || 'Não foi possível carregar a configuração atual do mapa.',
+        });
+        setGoogleMapsApiKey('');
+        setGoogleMapsMapId('');
+      } finally {
+        if (!cancelled) {
+          setIsLoadingConfig(false);
+        }
+      }
+    };
+
+    loadConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch]);
+
+  const tabs = useMemo(
+    () => [
+      { id: 'maps', label: 'Mapas', icon: Map },
+      { id: 'system', label: 'Sistema', icon: SettingsIcon },
+      { id: 'notifications', label: 'Notificações', icon: Bell },
+      { id: 'integrations', label: 'Integrações', icon: Globe },
+    ],
+    []
+  );
 
   const testGoogleMapsAPI = async (testApiKey: string) => {
     if (!testApiKey.trim()) {
@@ -85,9 +121,9 @@ export const AdminSettings: React.FC = () => {
       return true;
     } catch (err: any) {
       console.error('Google Maps API Error:', err);
-      
+
       let errorMessage = 'Erro desconhecido ao testar a API';
-      
+
       if (err.message?.includes('InvalidKeyMapError')) {
         errorMessage = 'Chave da API inválida. Verifique se a chave está correta e tem as permissões necessárias.';
       } else if (err.message?.includes('RefererNotAllowedMapError')) {
@@ -101,7 +137,7 @@ export const AdminSettings: React.FC = () => {
       } else {
         errorMessage = `Erro ao carregar Google Maps: ${err.message}`;
       }
-      
+
       setApiTestResult({ success: false, message: errorMessage });
       return false;
     } finally {
@@ -127,15 +163,44 @@ export const AdminSettings: React.FC = () => {
     }
 
     const isValid = await testGoogleMapsAPI(tempApiKey);
-    if (isValid) {
-      const trimmedApiKey = tempApiKey.trim();
-      const trimmedMapId = tempMapId.trim();
+    if (!isValid) {
+      return;
+    }
 
-      setGoogleMapsApiKey(trimmedApiKey);
-      setGoogleMapsMapId(trimmedMapId);
-      localStorage.setItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY, trimmedApiKey);
-      localStorage.setItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY, trimmedMapId);
+    const trimmedApiKey = tempApiKey.trim();
+    const trimmedMapId = tempMapId.trim();
+
+    try {
+      setIsSavingConfig(true);
+      const payload = await apiFetch<{ config?: MapConfigResponse }>('/config/maps', {
+        method: 'POST',
+        body: JSON.stringify({
+          googleMapsApiKey: trimmedApiKey,
+          googleMapsMapId: trimmedMapId,
+        }),
+      });
+
+      const config = payload?.config ?? (payload as unknown as MapConfigResponse);
+      const savedApiKey = config?.googleMapsApiKey?.trim() ?? trimmedApiKey;
+      const savedMapId = config?.googleMapsMapId?.trim() ?? trimmedMapId;
+
+      setGoogleMapsApiKey(savedApiKey);
+      setGoogleMapsMapId(savedMapId);
+      setTempApiKey(savedApiKey);
+      setTempMapId(savedMapId);
+
       setApiTestResult({ success: true, message: 'Configurações salvas com sucesso!' });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('linka:map-config-updated'));
+      }
+    } catch (error: any) {
+      console.error('Falha ao salvar configuração do Google Maps', error);
+      setApiTestResult({
+        success: false,
+        message: error?.message || 'Não foi possível salvar as configurações. Tente novamente.',
+      });
+    } finally {
+      setIsSavingConfig(false);
     }
   };
 
@@ -153,12 +218,12 @@ export const AdminSettings: React.FC = () => {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <div className="flex items-start gap-3">
           <Key className="text-blue-600 mt-0.5" size={20} />
-          <div>
+          <div className="flex-1">
             <h4 className="font-medium text-blue-900 mb-2">Chave da API do Google Maps</h4>
             <p className="text-sm text-blue-700 mb-4">
               Para usar mapas interativos, você precisa configurar uma chave da API do Google Maps com faturamento habilitado.
             </p>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -170,6 +235,7 @@ export const AdminSettings: React.FC = () => {
                   onChange={(e) => setTempApiKey(e.target.value)}
                   placeholder="AIzaSyC..."
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isLoadingConfig || isSavingConfig}
                 />
               </div>
 
@@ -183,6 +249,7 @@ export const AdminSettings: React.FC = () => {
                   onChange={(e) => setTempMapId(e.target.value)}
                   placeholder="ex: d0e5f9a1c3b4abcd"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isLoadingConfig || isSavingConfig}
                 />
                 <p className="mt-2 text-xs text-gray-500">
                   Utilize um mapa baseado em vetores com suporte a marcadores avançados, criado no Google Cloud Console.
@@ -191,8 +258,8 @@ export const AdminSettings: React.FC = () => {
 
               {apiTestResult && (
                 <div className={`border rounded-lg p-3 ${
-                  apiTestResult.success 
-                    ? 'bg-green-50 border-green-200' 
+                  apiTestResult.success
+                    ? 'bg-green-50 border-green-200'
                     : 'bg-red-50 border-red-200'
                 }`}>
                   <div className="flex items-center gap-2">
@@ -213,17 +280,18 @@ export const AdminSettings: React.FC = () => {
               <div className="flex gap-3">
                 <button
                   onClick={handleTestApi}
-                  disabled={isTestingApi || !tempApiKey.trim()}
+                  disabled={isTestingApi || !tempApiKey.trim() || isLoadingConfig}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isTestingApi ? 'Testando...' : 'Testar API'}
                 </button>
                 <button
                   onClick={handleSaveApiKey}
-                  disabled={isTestingApi || !tempApiKey.trim() || !tempMapId.trim()}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isTestingApi || !tempApiKey.trim() || !tempMapId.trim() || isSavingConfig || isLoadingConfig}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Salvar Configuração
+                  <Save size={16} />
+                  {isSavingConfig ? 'Salvando...' : 'Salvar Configurações'}
                 </button>
               </div>
             </div>
@@ -231,7 +299,6 @@ export const AdminSettings: React.FC = () => {
         </div>
       </div>
 
-      {/* Setup Instructions */}
       <div className="bg-gray-50 rounded-lg p-6">
         <h4 className="font-medium text-gray-900 mb-4">Como configurar a API do Google Maps:</h4>
         <ol className="text-sm text-gray-600 space-y-2 list-decimal list-inside">
@@ -253,26 +320,23 @@ export const AdminSettings: React.FC = () => {
             Em "Mapas personalizados", crie um mapa baseado em vetores com suporte a marcadores avançados e copie o ID gerado
           </li>
           <li>
-            <strong className="text-red-600">IMPORTANTE:</strong> Habilite o faturamento no projeto
-            (obrigatório mesmo para uso gratuito)
+            <strong className="text-red-600">IMPORTANTE:</strong> Habilite o faturamento no projeto (obrigatório mesmo para uso gratuito)
           </li>
         </ol>
-        
+
         <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
           <div className="flex items-start gap-2">
             <AlertCircle className="text-yellow-600 mt-0.5" size={16} />
             <div>
               <p className="text-sm font-medium text-yellow-800">Faturamento Obrigatório</p>
               <p className="text-sm text-yellow-700 mt-1">
-                O Google Maps requer que o faturamento esteja habilitado no projeto, mesmo para uso dentro 
-                da cota gratuita. Sem isso, você receberá erros de "BillingNotEnabledMapError".
+                O Google Maps requer que o faturamento esteja habilitado no projeto, mesmo para uso dentro da cota gratuita. Sem isso, você receberá erros de "BillingNotEnabledMapError".
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Current Configuration */}
       {googleMapsApiKey && googleMapsMapId && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -296,7 +360,7 @@ export const AdminSettings: React.FC = () => {
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Configurações do Sistema</h3>
         <p className="text-sm text-gray-600">Configurações gerais da plataforma</p>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -353,13 +417,12 @@ export const AdminSettings: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        {/* Tabs */}
         <div className="border-b border-gray-200">
           <nav className="flex overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
-              
+
               return (
                 <button
                   key={tab.id}
@@ -378,12 +441,13 @@ export const AdminSettings: React.FC = () => {
           </nav>
         </div>
 
-        {/* Tab Content */}
         <div className="p-6">
           <TabContent />
-          
+
           <div className="flex justify-end mt-8 pt-6 border-t border-gray-200">
-            <button className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+            <button
+              className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
               <Save size={16} />
               Salvar Configurações
             </button>
@@ -393,3 +457,4 @@ export const AdminSettings: React.FC = () => {
     </div>
   );
 };
+
