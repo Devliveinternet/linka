@@ -74,7 +74,9 @@ export const useGoogleFleetMap = ({
   const [showTraffic, setShowTraffic] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const markersRef = useRef<(
+    google.maps.marker.AdvancedMarkerElement | google.maps.Marker
+  )[]>([]);
   const trafficLayerRef = useRef<google.maps.TrafficLayer | null>(null);
   const loaderRef = useRef<Loader>();
   const lastLoadedApiKeyRef = useRef<string>();
@@ -159,14 +161,28 @@ export const useGoogleFleetMap = ({
     return wrapper;
   }, []);
 
+  const clearMarkers = useCallback(() => {
+    markersRef.current.forEach(marker => {
+      if ('setMap' in marker) {
+        marker.setMap(null);
+      } else {
+        marker.map = null;
+      }
+    });
+    markersRef.current = [];
+  }, []);
+
   const addDeviceMarkers = useCallback(
     (mapInstance: google.maps.Map) => {
-      markersRef.current.forEach(marker => (marker.map = null));
-      markersRef.current = [];
+      clearMarkers();
 
       const devicesToRender = showOfflineDevices
         ? devices
         : devices.filter(device => device.status === 'online');
+
+      const supportsAdvancedMarkers = Boolean(
+        google.maps.marker && google.maps.marker.AdvancedMarkerElement
+      );
 
       devicesToRender.forEach(device => {
         if (!device.position) return;
@@ -192,12 +208,52 @@ export const useGoogleFleetMap = ({
           );
         };
 
-        const marker = new google.maps.marker.AdvancedMarkerElement({
-          position,
-          map: mapInstance,
-          title: `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`,
-          content: createVehicleMarkerContent(getMarkerIcon()),
-        });
+        const markerTitle = `${getVehicleTypeFromDevice(device.id, vehicles).toUpperCase()} - ${device.status}`;
+
+        const markerIcon = getMarkerIcon();
+
+        let marker: google.maps.marker.AdvancedMarkerElement | google.maps.Marker;
+
+        if (supportsAdvancedMarkers) {
+          marker = new google.maps.marker.AdvancedMarkerElement({
+            position,
+            map: mapInstance,
+            title: markerTitle,
+            content: createVehicleMarkerContent(markerIcon),
+          });
+        } else {
+          const markerOptions: google.maps.MarkerOptions = {
+            position,
+            map: mapInstance,
+            title: markerTitle,
+          };
+
+          if (markerIcon.url) {
+            const size = markerIcon.scaledSize ?? markerIcon.size;
+            const anchor = markerIcon.anchor;
+            markerOptions.icon = {
+              url: markerIcon.url,
+              ...(size ? { scaledSize: new google.maps.Size(size.width, size.height) } : {}),
+              ...(anchor ? { anchor: new google.maps.Point(anchor.x, anchor.y) } : {}),
+            };
+          } else if (markerIcon.path) {
+            markerOptions.icon = {
+              path: markerIcon.path,
+              fillColor: markerIcon.fillColor,
+              fillOpacity: markerIcon.fillOpacity,
+              strokeColor: markerIcon.strokeColor,
+              strokeOpacity: markerIcon.strokeOpacity,
+              strokeWeight: markerIcon.strokeWeight,
+              scale: markerIcon.scale,
+              rotation: markerIcon.rotation,
+              ...(markerIcon.anchor
+                ? { anchor: new google.maps.Point(markerIcon.anchor.x, markerIcon.anchor.y) }
+                : {}),
+            } as google.maps.Symbol;
+          }
+
+          marker = new google.maps.Marker(markerOptions);
+        }
 
         const infoWindow = new google.maps.InfoWindow({
           content: `
@@ -247,14 +303,25 @@ export const useGoogleFleetMap = ({
             }
           });
 
-          infoWindow.open({ map: mapInstance, anchor: marker });
+          if (supportsAdvancedMarkers && marker instanceof google.maps.marker.AdvancedMarkerElement) {
+            infoWindow.open({ map: mapInstance, anchor: marker });
+          } else {
+            infoWindow.open(mapInstance, marker as google.maps.Marker);
+          }
           (marker as any).infoWindow = infoWindow;
         });
 
         markersRef.current.push(marker);
       });
     },
-    [createVehicleMarkerContent, devices, selectedDevice, showOfflineDevices, vehicles]
+    [
+      clearMarkers,
+      createVehicleMarkerContent,
+      devices,
+      selectedDevice,
+      showOfflineDevices,
+      vehicles
+    ]
   );
 
   const resolveGoogleMapsErrorMessage = useCallback((error: unknown) => {
@@ -351,15 +418,14 @@ export const useGoogleFleetMap = ({
       addDeviceMarkers(mapInstance);
     } catch (error) {
       console.error('Error loading Google Maps API', error);
-      markersRef.current.forEach(marker => marker.setMap(null));
-      markersRef.current = [];
+      clearMarkers();
       setMap(null);
       setLoadError(resolveGoogleMapsErrorMessage(error));
       loaderRef.current = undefined;
       lastLoadedApiKeyRef.current = undefined;
       resetGoogleMapsLoaderInstance();
     }
-  }, [apiKey, addDeviceMarkers, resolveGoogleMapsErrorMessage, normalizedMapId]);
+  }, [apiKey, addDeviceMarkers, clearMarkers, resolveGoogleMapsErrorMessage, normalizedMapId]);
 
   useEffect(() => {
     if (!apiKey) return;
