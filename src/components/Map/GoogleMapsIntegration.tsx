@@ -2,23 +2,20 @@ import React from 'react';
 import { ZoomIn, ZoomOut, RotateCcw, Navigation, Circle, Square, AlertTriangle } from 'lucide-react';
 import { Device, Vehicle } from '../../types';
 import { useGoogleFleetMap } from '../../hooks/useGoogleFleetMap';
-import { GOOGLE_MAPS_MAP_ID_STORAGE_KEY } from '../../utils/googleMaps';
 
 interface GoogleMapsIntegrationProps {
   apiKey: string;
-  onApiKeyChange: (apiKey: string) => void;
+  mapId?: string;
   devices: Device[];
   vehicles?: Vehicle[];
 }
 
 export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
   apiKey,
+  mapId,
   devices,
   vehicles = []
 }) => {
-  const storedMapId = typeof window !== 'undefined'
-    ? window.localStorage?.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim() ?? ''
-    : '';
 
   const {
     mapRef,
@@ -45,7 +42,7 @@ export const GoogleMapsIntegration: React.FC<GoogleMapsIntegrationProps> = ({
     getStatusLabel,
     focusOnDevice,
     loadError
-  } = useGoogleFleetMap({ apiKey, mapId: storedMapId, devices, vehicles });
+  } = useGoogleFleetMap({ apiKey, mapId, devices, vehicles });
 
   return (
     <div className="space-y-6">

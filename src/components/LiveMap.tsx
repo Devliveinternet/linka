@@ -4,9 +4,7 @@ import { useTraccarRealtime } from '../hooks/useTraccarRealtime';
 import { MarkerClusterer } from '@googlemaps/markerclusterer';
 import { useAuth } from '../context/AuthContext';
 import {
-  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
   GOOGLE_MAPS_LIBRARIES,
-  GOOGLE_MAPS_MAP_ID_STORAGE_KEY,
   GOOGLE_MAPS_SCRIPT_ID,
   resetGoogleMapsLoaderInstance
 } from '../utils/googleMaps';
@@ -159,6 +157,9 @@ export default function LiveMap() {
   const [showGeofences, setShowGeofences] = useState(true);
   const [deviceSnapshots, setDeviceSnapshots] = useState<Map<number, Position>>(() => new Map());
   const [isCompact, setIsCompact] = useState(false);
+  const [mapSettings, setMapSettings] = useState<{ apiKey: string; mapId: string } | null>(null);
+  const [isLoadingMapSettings, setIsLoadingMapSettings] = useState(false);
+  const [configVersion, setConfigVersion] = useState(0);
 
   // Busca (UI)
   const [query, setQuery] = useState('');
@@ -185,6 +186,56 @@ export default function LiveMap() {
 
   // -------- rota (backend) --------
   const { apiFetch, token } = useAuth();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handler = () => setConfigVersion((prev) => prev + 1);
+    window.addEventListener('linka:map-config-updated', handler);
+    return () => window.removeEventListener('linka:map-config-updated', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!token) {
+      setMapSettings(null);
+      setIsLoadingMapSettings(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingMapSettings(true);
+
+    apiFetch<{ config?: { googleMapsApiKey?: string; googleMapsMapId?: string } }>('/config/maps')
+      .then((payload) => {
+        if (cancelled) return;
+        const config = payload?.config ?? (payload as any);
+        const apiKey = config?.googleMapsApiKey?.trim() ?? '';
+        const mapId = config?.googleMapsMapId?.trim() ?? '';
+        setMapSettings({ apiKey, mapId });
+        if (!apiKey) {
+          setMapError('Configure a chave da API do Google Maps para visualizar o mapa.');
+        } else {
+          setMapError(null);
+        }
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        console.error('Falha ao carregar configuração do mapa', error);
+        setMapSettings({ apiKey: '', mapId: '' });
+        setMapError('Não foi possível carregar a configuração do mapa. Tente novamente mais tarde.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingMapSettings(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch, token, configVersion]);
 
   const fetchRoute = useCallback(async (deviceId: number, hours = 2) => {
     const search = new URLSearchParams({
@@ -241,10 +292,10 @@ export default function LiveMap() {
     let cancelled = false;
 
     const ensureGoogleMapsLoaded = async () => {
-      if (typeof window === 'undefined') return;
+      if (typeof window === 'undefined' || isLoadingMapSettings) return;
 
-      const storedKey = window.localStorage?.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim() ?? '';
-      const storedMapId = window.localStorage?.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim() ?? '';
+      const storedKey = mapSettings?.apiKey?.trim() ?? '';
+      const storedMapId = mapSettings?.mapId?.trim() ?? '';
       const envKey = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string | undefined)?.trim() ?? '';
       let apiKey = storedKey || envKey;
 
@@ -288,6 +339,7 @@ export default function LiveMap() {
 
       if (!apiKey) {
         if (!cancelled) {
+          setReady(false);
           setMapError('Configure a chave da API do Google Maps para visualizar o mapa.');
         }
         return;
@@ -376,7 +428,7 @@ export default function LiveMap() {
         devOverlayObserverRef.current = null;
       }
     };
-  }, []);
+  }, [isLoadingMapSettings, mapSettings]);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1024px)');

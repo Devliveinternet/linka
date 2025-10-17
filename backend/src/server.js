@@ -27,6 +27,11 @@ import { verifyPassword } from "./users/crypto.js";
 import { createSession, revokeSession } from "./users/sessionStore.js";
 import { requireAuth } from "./users/authMiddleware.js";
 import {
+  getMapConfig,
+  initializeMapConfigStore,
+  updateMapConfig,
+} from "./config/mapConfigStore.js";
+import {
   initializeDeviceAssignments,
   ensureMasterDeviceAssignments,
   getDeviceAccess,
@@ -46,6 +51,7 @@ const knotsToKmh = (knots = 0) => Math.round(knots * 1.852);
 
 initializeUserStore();
 initializeDeviceAssignments();
+initializeMapConfigStore();
 for (const user of getAllUsers()) {
   if (user.role === "master") {
     ensureMasterDeviceAssignments(user.id);
@@ -91,6 +97,22 @@ app.get("/auth/me", requireAuth, (req, res) => {
 app.post("/auth/logout", requireAuth, (req, res) => {
   revokeSession(req.authToken);
   res.json({ success: true });
+});
+
+// ----------------- map configuration -----------------
+app.get("/config/maps", requireAuth, (req, res) => {
+  const config = getMapConfig();
+  res.json({ config });
+});
+
+app.post("/config/maps", requireAuth, (req, res) => {
+  try {
+    const updated = updateMapConfig(req.user, req.body || {});
+    res.json({ config: updated });
+  } catch (error) {
+    const status = error.statusCode || 400;
+    res.status(status).json({ error: error.message || "Não foi possível atualizar a configuração do mapa" });
+  }
 });
 
 // ----------------- user management -----------------
