@@ -2,10 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { GoogleMapsIntegration } from './GoogleMapsIntegration';
 import { Device, Driver, Vehicle } from '../../types';
 import { Settings, AlertCircle } from 'lucide-react';
-import {
-  GOOGLE_MAPS_API_KEY_STORAGE_KEY,
-  GOOGLE_MAPS_MAP_ID_STORAGE_KEY
-} from '../../utils/googleMaps';
+import { useAuth } from '../../context/AuthContext';
 
 interface FleetMapViewProps {
   devices: Device[];
@@ -14,28 +11,83 @@ interface FleetMapViewProps {
   onNavigateToAdmin?: () => void;
 }
 
-export const FleetMapView: React.FC<FleetMapViewProps> = ({ 
-  devices, 
-  drivers, 
+export const FleetMapView: React.FC<FleetMapViewProps> = ({
+  devices,
+  drivers,
   vehicles,
   onNavigateToAdmin
 }) => {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState<string>('');
   const [googleMapsMapId, setGoogleMapsMapId] = useState<string>('');
+  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [configVersion, setConfigVersion] = useState(0);
+  const { apiFetch, token } = useAuth();
 
-  // Load API key from localStorage on component mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem(GOOGLE_MAPS_API_KEY_STORAGE_KEY)?.trim();
-    const savedMapId = localStorage.getItem(GOOGLE_MAPS_MAP_ID_STORAGE_KEY)?.trim();
-
-    if (savedApiKey) {
-      setGoogleMapsApiKey(savedApiKey);
+    if (typeof window === 'undefined') {
+      return;
     }
 
-    if (savedMapId) {
-      setGoogleMapsMapId(savedMapId);
-    }
+    const handler = () => setConfigVersion((prev) => prev + 1);
+    window.addEventListener('linka:map-config-updated', handler);
+    return () => window.removeEventListener('linka:map-config-updated', handler);
   }, []);
+
+  // Load API key configuration from backend on component mount
+  useEffect(() => {
+    if (!token) {
+      setIsLoadingConfig(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingConfig(true);
+    setConfigError(null);
+
+    apiFetch<{ config?: { googleMapsApiKey?: string; googleMapsMapId?: string } }>('/config/maps')
+      .then((payload) => {
+        if (cancelled) return;
+        const config = payload?.config ?? (payload as any);
+        const apiKey = config?.googleMapsApiKey?.trim() ?? '';
+        const mapId = config?.googleMapsMapId?.trim() ?? '';
+        setGoogleMapsApiKey(apiKey);
+        setGoogleMapsMapId(mapId);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        console.error('Falha ao carregar configuração do mapa', error);
+        setConfigError(error?.message || 'Não foi possível carregar a configuração do mapa.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingConfig(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiFetch, token, configVersion]);
+
+  if (isLoadingConfig) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Mapa da Frota</h1>
+            <p className="text-gray-600">Visualização em tempo real da localização dos veículos</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-8">
+          <div className="max-w-md mx-auto text-center text-gray-600">
+            Carregando configuração do mapa...
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // If no API key is configured, show configuration prompt
   if (!googleMapsApiKey || !googleMapsMapId) {
@@ -64,10 +116,16 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
               <div className="flex items-start gap-3">
                 <AlertCircle className="text-blue-600 mt-0.5" size={16} />
                 <div className="text-left">
-                  <p className="text-sm text-blue-700">
-                    <strong>Importante:</strong> A configuração da API do Google Maps deve ser feita na seção de 
-                    Administração → Configurações → Mapas.
-                  </p>
+                  {configError ? (
+                    <p className="text-sm text-red-600">
+                      {configError}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-blue-700">
+                      <strong>Importante:</strong> A configuração da API do Google Maps deve ser feita na seção de
+                      Administração → Configurações → Mapas.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -104,7 +162,7 @@ export const FleetMapView: React.FC<FleetMapViewProps> = ({
   return (
     <GoogleMapsIntegration
       apiKey={googleMapsApiKey}
-      onApiKeyChange={setGoogleMapsApiKey}
+      mapId={googleMapsMapId}
       devices={devices}
       vehicles={vehicles}
     />
