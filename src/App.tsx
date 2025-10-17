@@ -16,6 +16,7 @@ import { Alert } from './types';
 import LiveMap from './components/LiveMap';
 import { LoginPage } from './components/Auth/LoginPage';
 import { useAuth, AuthUser } from './context/AuthContext';
+import { DriverProvider, useDrivers } from './context/DriverContext';
 
 const VIEW_ORDER: Array<'dashboard' | 'map' | 'vehicles' | 'drivers' | 'geofences' | 'alerts' | 'trips' | 'admin' | 'settings'> = [
   'dashboard',
@@ -69,12 +70,12 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
     alerts: traccarAlerts,
     trips,
     geofences,
-    drivers,
     vehicles,
     loading,
     error,
     refetch
   } = useTraccarData({ autoRefresh: shouldAutoRefresh });
+  const { drivers } = useDrivers();
 
   const wasAutoRefreshDisabled = useRef(!shouldAutoRefresh);
 
@@ -156,9 +157,9 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
       case 'map':
         return <LiveMap />;
       case 'vehicles':
-        return <VehiclesList devices={devices} vehicles={vehicles} drivers={drivers} />;
+        return <VehiclesList devices={devices} vehicles={vehicles} />;
       case 'drivers':
-        return <DriversView drivers={drivers} devices={devices} />;
+        return <DriversView devices={devices} vehicles={vehicles} />;
       case 'geofences':
         return <GeofencesView geofences={geofences} />;
       case 'alerts':
@@ -170,9 +171,9 @@ const AuthenticatedApp: React.FC<{ user: AuthUser; onLogout: () => Promise<void>
           />
         );
       case 'trips':
-        return <TripsView trips={trips} drivers={drivers} vehicles={vehicles} />;
+        return <TripsView trips={trips} vehicles={vehicles} />;
       case 'admin':
-        return <AdminView currentUser={user} />;
+        return <AdminView currentUser={user} vehicles={vehicles} />;
       case 'settings':
         return <SettingsView />;
       default:
@@ -287,7 +288,11 @@ const ProtectedAppRoute: React.FC = () => {
     return null;
   }
   const handleLogout = useCallback(() => logout(), [logout]);
-  return <AuthenticatedApp user={user} onLogout={handleLogout} />;
+  return (
+    <DriverProvider>
+      <AuthenticatedApp user={user} onLogout={handleLogout} />
+    </DriverProvider>
+  );
 };
 
 function App() {

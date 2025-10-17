@@ -1,17 +1,40 @@
-import React, { useState } from 'react';
-import { Search, Plus, User, Phone, Mail, Award, Clock, TrendingUp } from 'lucide-react';
-import { Driver, Device } from '../../types';
+import React, { useMemo, useState } from 'react';
+import { Search, Plus, User, Phone, Mail, Edit2, Trash2, Car } from 'lucide-react';
+import { Device, Vehicle } from '../../types';
+import { useDrivers } from '../../context/DriverContext';
+import { DriverFormModal } from './DriverFormModal';
 
 interface DriversViewProps {
-  drivers: Driver[];
   devices: Device[];
+  vehicles: Vehicle[];
 }
 
-export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) => {
+export const DriversView: React.FC<DriversViewProps> = ({ devices, vehicles }) => {
+  const { drivers, addDriver, updateDriver, removeDriver } = useDrivers();
   const [searchTerm, setSearchTerm] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDriverId, setEditingDriverId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const driverBeingEdited = useMemo(
+    () => (editingDriverId ? drivers.find(driver => driver.id === editingDriverId) : undefined),
+    [drivers, editingDriverId]
+  );
+
+  const getDriverVehicle = (driverId: string) => {
+    const driver = drivers.find(d => d.id === driverId);
+    if (!driver?.vehicleId) {
+      return undefined;
+    }
+    return vehicles.find(vehicle => vehicle.id === driver.vehicleId);
+  };
 
   const getDriverDevice = (driverId: string) => {
-    return devices.find(d => d.driverId === driverId);
+    const vehicle = getDriverVehicle(driverId);
+    if (!vehicle?.deviceId) {
+      return undefined;
+    }
+    return devices.find(d => d.id === vehicle.deviceId);
   };
 
   const filteredDrivers = drivers.filter(driver =>
@@ -35,6 +58,41 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
     return badges[status as keyof typeof badges] || badges.inactive;
   };
 
+  const handleOpenCreateModal = () => {
+    setEditingDriverId(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEditModal = (driverId: string) => {
+    setEditingDriverId(driverId);
+    setIsModalOpen(true);
+  };
+
+  const handleDeleteDriver = (driverId: string) => {
+    const driver = drivers.find(d => d.id === driverId);
+    if (!driver) {
+      return;
+    }
+    if (confirm(`Tem certeza que deseja remover ${driver.name}?`)) {
+      removeDriver(driverId);
+    }
+  };
+
+  const handleSubmit = async (values: Parameters<typeof addDriver>[0]) => {
+    setIsSaving(true);
+    try {
+      if (editingDriverId) {
+        updateDriver(editingDriverId, values);
+      } else {
+        addDriver(values);
+      }
+      setIsModalOpen(false);
+      setEditingDriverId(null);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -42,7 +100,10 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
           <h1 className="text-2xl font-bold text-gray-900">Motoristas</h1>
           <p className="text-gray-600">Gestão da equipe e performance</p>
         </div>
-        <button className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+        <button
+          className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          onClick={handleOpenCreateModal}
+        >
           <Plus size={20} />
           Adicionar Motorista
         </button>
@@ -66,11 +127,12 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredDrivers.map((driver) => {
           const device = getDriverDevice(driver.id);
+          const vehicle = getDriverVehicle(driver.id);
           const isOnDuty = device?.status === 'online' && device?.position?.ignition;
-          
+
           return (
             <div key={driver.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
-              <div className="p-6">
+              <div className="p-6 space-y-4">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-blue-100 rounded-lg">
@@ -85,6 +147,14 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
                     {driver.status}
                   </span>
                 </div>
+
+                {vehicle && (
+                  <div className="flex items-center gap-2 text-sm text-gray-700 bg-blue-50 rounded-lg px-3 py-2">
+                    <Car size={16} className="text-blue-500" />
+                    <span className="font-medium">{vehicle.plate}</span>
+                    <span className="text-gray-500">{vehicle.model}</span>
+                  </div>
+                )}
 
                 {/* Score */}
                 <div className="mb-4 p-3 bg-gray-50 rounded-lg">
@@ -136,6 +206,23 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
                     </div>
                   )}
                 </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => handleOpenEditModal(driver.id)}
+                    className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+                  >
+                    <Edit2 size={16} />
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => handleDeleteDriver(driver.id)}
+                    className="flex items-center gap-1 text-sm text-red-600 hover:text-red-700"
+                  >
+                    <Trash2 size={16} />
+                    Excluir
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -149,6 +236,22 @@ export const DriversView: React.FC<DriversViewProps> = ({ drivers, devices }) =>
           <p className="text-gray-600">Tente ajustar os filtros ou adicionar novos motoristas.</p>
         </div>
       )}
+
+      <DriverFormModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          if (!isSaving) {
+            setIsModalOpen(false);
+            setEditingDriverId(null);
+          }
+        }}
+        onSubmit={handleSubmit}
+        vehicles={vehicles}
+        isSubmitting={isSaving}
+        title={editingDriverId ? 'Editar Motorista' : 'Novo Motorista'}
+        confirmLabel={editingDriverId ? 'Atualizar Motorista' : 'Salvar Motorista'}
+        initialValues={driverBeingEdited}
+      />
     </div>
   );
 };

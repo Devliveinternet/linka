@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Plus, Truck, Clock, Save, X, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { Device, Vehicle, Driver } from '../../types';
+import { Device, Vehicle } from '../../types';
 import { mockClients } from '../../data/adminMockData';
 import { handleImageUpload, validateImageUrl } from '../../utils/vehicleIcons';
 import { useAuth } from '../../context/AuthContext';
+import { useDrivers } from '../../context/DriverContext';
 
 type VehicleFormState = {
   plate: string;
@@ -47,10 +48,9 @@ const parseIntegerInput = (value: string): number | undefined => {
 interface VehiclesListProps {
   devices: Device[];
   vehicles: Vehicle[];
-  drivers: Driver[];
 }
 
-export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, drivers }) => {
+export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [localDevices, setLocalDevices] = useState<Device[]>(devices);
@@ -63,6 +63,7 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
   const [isSavingVehicle, setIsSavingVehicle] = useState(false);
   const [vehicleSubmitError, setVehicleSubmitError] = useState<string | null>(null);
   const { apiFetch } = useAuth();
+  const { drivers } = useDrivers();
 
   useEffect(() => {
     setLocalDevices(devices);
@@ -393,8 +394,11 @@ export const VehiclesList: React.FC<VehiclesListProps> = ({ devices, vehicles, d
   };
 
   const getDriverForDevice = (deviceId: string) => {
-    const device = localDevices.find(d => d.id === deviceId);
-    return device?.driverId ? drivers.find(d => d.id === device.driverId) : undefined;
+    const vehicle = getVehicleForDevice(deviceId);
+    if (!vehicle) {
+      return undefined;
+    }
+    return drivers.find(driver => driver.vehicleId === vehicle.id);
   };
 
   const filteredDevices = useMemo(() => {
