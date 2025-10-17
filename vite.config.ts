@@ -16,6 +16,10 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true,
       },
+      '/config': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
       '/traccar': {
         target: backendTarget,
         changeOrigin: true,
