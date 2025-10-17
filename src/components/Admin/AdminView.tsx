@@ -4,7 +4,7 @@ import {
   Truck,
   Smartphone,
   Users,
-  Shield, 
+  Shield,
   BarChart3,
   Settings as SettingsIcon
 } from 'lucide-react';
@@ -18,12 +18,14 @@ import { EquipmentRegistration } from '../Equipment/EquipmentRegistration';
 import { AdminSettings } from './AdminSettings';
 import { UserHierarchyManager } from './UserHierarchyManager';
 import { AuthUser } from '../../context/AuthContext';
+import { Vehicle } from '../../types';
 
 interface AdminViewProps {
   currentUser: AuthUser;
+  vehicles: Vehicle[];
 }
 
-export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
+export const AdminView: React.FC<AdminViewProps> = ({ currentUser, vehicles }) => {
   const isAdmin = currentUser.role === 'admin';
   const isMaster = currentUser.role === 'master';
 
@@ -75,7 +77,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       case 'devices':
         return <DevicesManagement />;
       case 'drivers':
-        return <DriversManagement />;
+        return <DriversManagement vehicles={vehicles} />;
       case 'roles':
         return <RolesManagement />;
       case 'reports':

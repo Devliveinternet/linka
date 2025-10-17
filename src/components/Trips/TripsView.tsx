@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { Search, Calendar, MapPin, Clock, Fuel, TrendingUp, Filter, Eye } from 'lucide-react';
-import { Trip, Driver, Vehicle } from '../../types';
+import { Trip, Vehicle } from '../../types';
+import { useDrivers } from '../../context/DriverContext';
 
 interface TripsViewProps {
   trips: Trip[];
-  drivers: Driver[];
   vehicles: Vehicle[];
 }
 
-export const TripsView: React.FC<TripsViewProps> = ({ trips, drivers, vehicles }) => {
+export const TripsView: React.FC<TripsViewProps> = ({ trips, vehicles }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const { drivers } = useDrivers();
 
   const getDriverName = (driverId?: string) => {
     return driverId ? drivers.find(d => d.id === driverId)?.name || 'N/A' : 'N/A';
